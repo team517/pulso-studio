@@ -29,7 +29,6 @@ const NAV = [
 export default function App() {
   const [path] = usePath();
   const [online, setOnline] = useState(true);
-  const [storageOk, setStorageOk] = useState(true);
   const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null; name?: string | null } | null>(null);
   const [pending, setPending] = useState<PairRequest[]>([]);
   const [approving, setApproving] = useState(false);
@@ -68,7 +67,7 @@ export default function App() {
       fetch("/api/platforms").then((r) => setOnline(r.ok)).catch(() => setOnline(false));
       // En el panel: ¿está tu PC encendido para editar?
       if (IN_PANEL) {
-        fetch("/api/autoedit/info").then((r) => r.json()).then((i) => { setPc(i.worker ?? { online: false, claude: false, busy: null }); setStorageOk(i.storage !== false); }).catch(() => {});
+        fetch("/api/autoedit/info").then((r) => r.json()).then((i) => { setPc(i.worker ?? { online: false, claude: false, busy: null }); }).catch(() => {});
         fetch("/api/pc/pending").then((r) => (r.ok ? r.json() : [])).then(setPending).catch(() => {});
       }
     };
@@ -133,7 +132,6 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
-        {!storageOk && <div className="note note--bad" style={{ margin: "16px 24px 0" }}><b>Falta el volumen en EasyPanel: al implementar se borra lo que hay en el servidor.</b> En EasyPanel → servicio <b>chipsfinder</b> → <b>Mounts</b> → <b>Add Volume Mount</b>: nombre <code>pulso-data</code>, ruta <code>/app/data</code> → Guardar → Implementar. Mientras tanto no pierdes nada: tu PC guarda una copia de todo y la devuelve sola.</div>}
         {pcJustConnected && <div className="note note--ok" style={{ margin: "16px 24px 0" }} onClick={() => setPcJustConnected(null)}><b>{pcJustConnected} se ha conectado solo.</b> Ya edita para ti y guarda una copia de todo (también de tu cuenta).</div>}
         {IN_PANEL && !pcJustConnected && pending.length > 0 && pathname !== "/conectar-pc" && (
           <div className="note note--warn pc-ask" style={{ margin: "16px 24px 0" }}>
