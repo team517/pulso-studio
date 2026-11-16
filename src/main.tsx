@@ -45,15 +45,23 @@ function Gate() {
   }, [recovering]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tu PC no tiene copia de la cuenta (o no responde en 15 s): se pasa a crearla con lo que ya escribiste
-  const giveUp = () => { setWaiting(false); setNoCopy(true); setFirstTime(true); setErr(""); };
+  const giveUp = () => {
+    setWaiting(false);
+    if (password.length < 8) { setNoCopy(true); setFirstTime(true); setErr("Usa al menos 8 caracteres."); return; }
+    setBusy(true);
+    setup(password, remember).then(() => setSt("ok")).catch((x) => {
+      // Mientras tanto tu PC devolvió la cuenta: se entra con ella
+      login(email, password, remember).then(() => setSt("ok")).catch(() => setErr((x as Error).message));
+    }).finally(() => setBusy(false));
+  };
   useEffect(() => {
     if (waiting && st && st !== "ok" && st.needsSetup && st.recover === "none") giveUp();
-  }, [waiting, st]);
+  }, [waiting, st]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!waiting) return;
-    const t = setTimeout(giveUp, 15000);
+    const t = setTimeout(giveUp, 8000);
     return () => clearTimeout(t);
-  }, [waiting]);
+  }, [waiting]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Si pulsaste «Entrar» mientras tanto, se entra solo en cuanto vuelve la cuenta
   useEffect(() => {
@@ -104,8 +112,8 @@ function Gate() {
             <label className="gate__remember"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Mantener la sesión iniciada</label>
             {err && <p className="gate__err">{err}</p>}
             {st.needsSetup && !creating && (waiting
-              ? <p className="gate__wait">Tu PC está devolviendo tu cuenta al servidor. Entrarás solo en cuanto termine (unos segundos).</p>
-              : <p className="gate__wait">El servidor se acaba de reiniciar: tu PC le devuelve tu cuenta. Entra con tu contraseña de siempre.</p>)}
+              ? <p className="gate__wait">Entrando…</p>
+              : null)}
             <button className="btn btn--primary" type="submit" disabled={busy || waiting}>{busy || waiting ? "Un momento…" : creating ? "Crear contraseña y entrar" : "Entrar"}</button>
             {st.needsSetup && (
               <button type="button" className="gate__link" onClick={() => { setFirstTime((v) => !v); setWaiting(false); setNoCopy(false); setErr(""); }}>
