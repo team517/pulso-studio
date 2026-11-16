@@ -1,11 +1,15 @@
 // Conexión y publicación en YouTube, TikTok e Instagram.
 // Las credenciales y tokens se guardan solo en la base de datos local (data/studio.db).
 import { readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { basename } from "node:path";
 import { getSetting, setSetting } from "./db.js";
 
 export const PORT = Number(process.env.STUDIO_PORT || 4321);
 const LOCAL = `http://localhost:${PORT}`;
-const IG = "https://graph.instagram.com/v21.0";
+// Versión actual de la API de Meta (nov. 2026)
+const META_V = "v27.0";
+const IG = `https://graph.instagram.com/${META_V}`;
+const FB = `https://graph.facebook.com/${META_V}`;
 
 export const PLATFORMS = ["youtube", "tiktok", "instagram"];
 const key = (p) => "platform:" + p;
@@ -32,7 +36,10 @@ export function status() {
       configured: p === "instagram" ? !!c.accessToken : !!(c.clientId && c.clientSecret),
       connected: p === "instagram" ? !!(c.accessToken && c.account) : !!c.tokens?.refresh_token || !!c.tokens?.access_token,
       account: c.account?.name ?? null,
-      clientId: c.clientId ?? null,
+      expiresAt: p === "instagram" ? c.expiresAt ?? null : null,
+      mode: p === "instagram" ? c.mode ?? null : null,
+      hasApp: p === "instagram" ? !!(c.appId && c.appSecret) : null,
+      clientId: (p === "instagram" ? c.appId : c.clientId) ?? null,
       privacy: c.privacy ?? (p === "tiktok" ? "SELF_ONLY" : "public"),
       redirectUri: p === "instagram" ? null : redirectUri(p),
       error: c.lastError ?? null,
@@ -43,11 +50,12 @@ export function status() {
 export async function configure(p, body) {
   const c = getConf(p);
   if (p === "instagram") {
+    if (body.appId !== undefined) c.appId = String(body.appId).trim();
+    if (body.appSecret) c.appSecret = String(body.appSecret).trim();
     if (body.accessToken !== undefined) {
       const token = String(body.accessToken).trim();
-      if (!token) { saveConf(p, {}); return; }
-      const me = await asJson(await fetch(`${IG}/me?fields=user_id,username&access_token=${encodeURIComponent(token)}`), "Instagram");
-      saveConf(p, { ...c, accessToken: token, refreshedAt: Date.now(), account: { id: me.user_id || me.id, name: "@" + me.username }, lastError: null });
+      if (!token) { saveConf(p, { appId: c.appId, appSecret: c.appSecret }); return; }
+      saveConf(p, await connectInstagram(c, token, body.pageId));
       return;
     }
   } else {
@@ -188,41 +196,122 @@ async function publishTikTok(post, file) {
   return { id: publish_id, url: null, note: "TikTok sigue procesando el vídeo." };
 }
 
-async function instagramToken() {
+/* ---------- Instagram ----------
+ * Dos formas de conectar:
+ *  · "facebook" (recomendada): Instagram profesional vinculado a una página de Facebook. Permite subir
+ *    el vídeo directamente desde el ordenador (subida "resumable"), sin túneles.
+ *  · "instagram": token de «Inicio de sesión con Instagram» (empieza por IG). Meta solo acepta un enlace
+ *    público al vídeo, así que necesita la «Dirección pública» (un túnel abierto a la hora de publicar).
+ */
+
+const tq = (t) => "access_token=" + encodeURIComponent(t);
+
+async function connectInstagram(c, token, pageId) {
+  const base = { appId: c.appId, appSecret: c.appSecret, lastError: null };
+  if (/^IG/.test(token)) {
+    const me = await asJson(await fetch(`${IG}/me?fields=user_id,username&${tq(token)}`), "Instagram");
+    return { ...base, mode: "instagram", accessToken: token, refreshedAt: Date.now(), expiresAt: Date.now() + 60 * 86400e3, account: { id: me.user_id || me.id, name: "@" + me.username } };
+  }
+  // Token de Facebook: si hay app, se cambia por uno de larga duración (así el de la página no caduca)
+  let user = token;
+  if (c.appId && c.appSecret) {
+    try {
+      const ex = await asJson(await fetch(`${FB}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(c.appId)}&client_secret=${encodeURIComponent(c.appSecret)}&fb_exchange_token=${encodeURIComponent(token)}`), "Facebook");
+      user = ex.access_token;
+    } catch (e) {
+      throw new Error("No se pudo alargar el token con el App ID y la clave secreta: " + e.message);
+    }
+  }
+  // Páginas del usuario con su cuenta de Instagram vinculada
+  let pages = [];
+  const r = await fetch(`${FB}/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&limit=100&${tq(user)}`);
+  if (r.ok) pages = (await r.json()).data ?? [];
+  else {
+    // Puede que ya sea un token de página
+    const me = await asJson(await fetch(`${FB}/me?fields=id,name,instagram_business_account{id,username}&${tq(user)}`), "Facebook");
+    if (me.instagram_business_account) pages = [{ ...me, access_token: user }];
+  }
+  const withIg = pages.filter((p) => p.instagram_business_account);
+  if (!withIg.length) {
+    throw new Error(pages.length
+      ? "Ninguna de tus páginas de Facebook tiene una cuenta de Instagram profesional vinculada."
+      : "El token no da acceso a ninguna página. Al generarlo, marca los permisos pages_show_list, pages_read_engagement, instagram_basic e instagram_content_publish y elige tu página.");
+  }
+  const page = withIg.find((p) => p.id === pageId) ?? withIg[0];
+  const ig = page.instagram_business_account;
+  // ¿Cuándo caduca el token de la página? (0 = nunca)
+  let expiresAt = null;
+  try {
+    const dbg = await (await fetch(`${FB}/debug_token?input_token=${encodeURIComponent(page.access_token)}&${tq(page.access_token)}`)).json();
+    const exp = dbg.data?.expires_at;
+    expiresAt = exp ? exp * 1000 : 0;
+  } catch { /* desconocido */ }
+  return {
+    ...base, mode: "facebook", accessToken: page.access_token, expiresAt,
+    account: { id: ig.id, name: "@" + (ig.username ?? "instagram") + " · " + page.name, pageId: page.id },
+    pages: withIg.map((p) => ({ id: p.id, name: p.name, ig: "@" + p.instagram_business_account.username })),
+  };
+}
+
+async function instagramConf() {
   const c = getConf("instagram");
   if (!c.accessToken || !c.account) throw new Error("Instagram no está conectado.");
-  // Los tokens de larga duración caducan a los 60 días: se renuevan cada ~20
-  if (!c.refreshedAt || Date.now() - c.refreshedAt > 20 * 86400e3) {
+  if (c.expiresAt && Date.now() > c.expiresAt) throw new Error("El token de Instagram ha caducado: pega uno nuevo en Conexiones.");
+  // Los tokens de «Inicio de sesión con Instagram» duran 60 días: se renuevan cada ~20
+  if (c.mode === "instagram" && (!c.refreshedAt || Date.now() - c.refreshedAt > 20 * 86400e3)) {
     try {
-      const r = await asJson(await fetch(`https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(c.accessToken)}`), "Instagram");
-      c.accessToken = r.access_token; c.refreshedAt = Date.now(); saveConf("instagram", c);
+      const r = await asJson(await fetch(`https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&${tq(c.accessToken)}`), "Instagram");
+      c.accessToken = r.access_token; c.refreshedAt = Date.now(); c.expiresAt = Date.now() + (r.expires_in || 60 * 86400) * 1000;
+      saveConf("instagram", c);
     } catch { /* se intenta con el que hay */ }
   }
   return c;
 }
 
 async function publishInstagram(post, file) {
-  const c = await instagramToken();
-  const tk = encodeURIComponent(c.accessToken);
-  const size = statSync(file).size;
-  const cont = await asJson(await fetch(`${IG}/${c.account.id}/media?access_token=${tk}`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ media_type: "REELS", upload_type: "resumable", caption: post.caption || "", share_to_feed: true }),
+  const c = await instagramConf();
+  const host = c.mode === "instagram" ? IG : FB;
+  const tk = tq(c.accessToken);
+  const body = { media_type: "REELS", caption: post.caption || "", share_to_feed: true };
+  if (c.mode === "instagram") {
+    const pub = publicUrl();
+    if (!/^https:\/\//.test(pub)) throw new Error("Con el token de Instagram, Meta necesita un enlace público al vídeo: pon la «Dirección pública» en Conexiones (o conecta con Facebook).");
+    body.video_url = `${pub}/files/exports/${basename(file)}`;
+  } else {
+    body.upload_type = "resumable";
+  }
+  const cont = await asJson(await fetch(`${host}/${c.account.id}/media?${tk}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   }), "Instagram");
-  const up = await fetch(`https://rupload.facebook.com/ig-api-upload/v21.0/${cont.id}`, {
-    method: "POST", headers: { authorization: "OAuth " + c.accessToken, offset: "0", file_size: String(size) }, body: readFileSync(file),
-  });
-  await asJson(up, "Instagram (subida)");
-  for (let i = 0; i < 90; i++) {
-    await sleep(4000);
-    const s = await asJson(await fetch(`${IG}/${cont.id}?fields=status_code,status&access_token=${tk}`), "Instagram");
+  if (c.mode !== "instagram") {
+    const size = statSync(file).size;
+    const up = await fetch(`https://rupload.facebook.com/ig-api-upload/${META_V}/${cont.id}`, {
+      method: "POST", headers: { authorization: "OAuth " + c.accessToken, offset: "0", file_size: String(size) }, body: readFileSync(file),
+    });
+    await asJson(up, "Instagram (subida del vídeo)");
+  }
+  // Meta procesa el vídeo; se mira cada 10 s durante un máximo de 8 min
+  for (let i = 0; ; i++) {
+    await sleep(10_000);
+    const s = await asJson(await fetch(`${host}/${cont.id}?fields=status_code,status&${tk}`), "Instagram");
     if (s.status_code === "FINISHED") break;
     if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new Error("Instagram no pudo procesar el vídeo: " + (s.status || s.status_code));
-    if (i === 89) throw new Error("Instagram tarda demasiado en procesar el vídeo.");
+    if (i >= 48) throw new Error("Instagram tarda demasiado en procesar el vídeo.");
   }
-  const pub = await asJson(await fetch(`${IG}/${c.account.id}/media_publish?creation_id=${cont.id}&access_token=${tk}`, { method: "POST" }), "Instagram");
-  const info = await fetch(`${IG}/${pub.id}?fields=permalink&access_token=${tk}`).then((r) => r.json()).catch(() => ({}));
+  const pub = await asJson(await fetch(`${host}/${c.account.id}/media_publish?creation_id=${cont.id}&${tk}`, { method: "POST" }), "Instagram");
+  const info = await fetch(`${host}/${pub.id}?fields=permalink&${tk}`).then((r) => r.json()).catch(() => ({}));
   return { id: pub.id, url: info.permalink ?? null };
+}
+
+/** Comprueba que la conexión de Instagram sigue funcionando (sin publicar nada). */
+export async function checkInstagram() {
+  const c = await instagramConf();
+  const host = c.mode === "instagram" ? IG : FB;
+  const fields = c.mode === "instagram" ? "user_id,username" : "id,username,media_count";
+  const target = c.mode === "instagram" ? "me" : c.account.id;
+  const me = await asJson(await fetch(`${host}/${target}?fields=${fields}&${tq(c.accessToken)}`), "Instagram");
+  const lim = c.mode === "instagram" ? null : await fetch(`${FB}/${c.account.id}/content_publishing_limit?fields=quota_usage,config&${tq(c.accessToken)}`).then((r) => r.json()).catch(() => null);
+  return { username: me.username, media: me.media_count ?? null, used: lim?.data?.[0]?.quota_usage ?? null, quota: lim?.data?.[0]?.config?.quota_total ?? null };
 }
 
 export async function publish(p, post, file) {

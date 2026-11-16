@@ -56,6 +56,7 @@ export type Post = {
 export type PlatformStatus = {
   id: PlatformId; configured: boolean; connected: boolean; account: string | null; clientId: string | null;
   privacy: string; redirectUri: string | null; error: string | null;
+  expiresAt?: number | null; mode?: "facebook" | "instagram" | null; hasApp?: boolean | null;
 };
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -109,6 +110,7 @@ export const api = {
   configurePlatform: (p: PlatformId, body: Record<string, string>) => req<PlatformStatus>("PUT", `/api/platforms/${p}`, body),
   setPublicUrl: (publicUrl: string) => req("PUT", "/api/platforms/public-url", { publicUrl }),
   disconnectPlatform: (p: PlatformId) => req("POST", `/api/platforms/${p}/disconnect`),
+  checkInstagram: () => req<{ username: string; media: number | null; used: number | null; quota: number | null }>("GET", "/api/platforms/instagram/check"),
 };
 
 /* ---------- Utilidades ---------- */

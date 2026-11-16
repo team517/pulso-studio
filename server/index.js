@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { db, DIRS, uid, now, row, getSetting, setSetting } from "./db.js";
 import { probe, makeThumb, transcribe } from "./media.js";
 import { createExport } from "./render.js";
-import { PORT, PLATFORMS, status as platformStatus, configure, disconnect, authUrl, handleCallback, publicUrl } from "./platforms.js";
+import { PORT, PLATFORMS, status as platformStatus, configure, disconnect, authUrl, handleCallback, publicUrl, checkInstagram, getConf } from "./platforms.js";
 import { startScheduler, runPost } from "./scheduler.js";
 
 const app = express();
@@ -254,6 +254,14 @@ app.put("/api/platforms/:p", wrap(async (req, res) => {
   if (!PLATFORMS.includes(req.params.p)) throw notFound();
   await configure(req.params.p, req.body || {});
   res.json(platformStatus().find((x) => x.id === req.params.p));
+}));
+
+app.get("/api/platforms/instagram/check", wrap(async (req, res) => {
+  res.json(await checkInstagram());
+}));
+
+app.get("/api/platforms/instagram/pages", wrap((req, res) => {
+  res.json(getConf("instagram").pages ?? []);
 }));
 
 app.post("/api/platforms/:p/disconnect", wrap((req, res) => {

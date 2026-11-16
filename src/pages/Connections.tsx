@@ -28,11 +28,13 @@ const GUIDES: Record<PlatformId, { steps: React.ReactNode[]; note?: string; link
   instagram: {
     link: "https://developers.facebook.com/apps",
     steps: [
-      <>Tu cuenta de Instagram tiene que ser <b>profesional</b> (empresa o creador).</>,
-      <>En <b>Meta for Developers</b> crea una app de tipo <b>Empresa</b> y añade el producto <b>Instagram</b>.</>,
-      <>En «Configuración de la API con inicio de sesión de Instagram» añade tu cuenta y pulsa <b>Generar token</b>.</>,
-      <>Pega el token aquí y guarda. Se renueva solo para que no caduque.</>,
+      <>Tu Instagram tiene que ser <b>profesional</b> (empresa o creador) y estar <b>vinculado a una página de Facebook</b> (en Instagram: Configuración → Centro de cuentas, o desde Meta Business Suite).</>,
+      <>En <b>Meta for Developers</b> pulsa <b>Crear app</b>, elige el tipo <b>Empresa</b> (o el caso de uso de gestionar contenido de Instagram) y créala.</>,
+      <>En la app, ve a <b>Configuración → Básica</b> y copia aquí abajo el <b>Identificador de la app</b> y la <b>Clave secreta</b>. Con ellas el token no caduca.</>,
+      <>Abre el <b>Explorador de la API Graph</b> (botón de abajo), elige tu app, pulsa <b>Generar token de acceso</b> y marca estos permisos: <span className="mono">instagram_basic</span>, <span className="mono">instagram_content_publish</span>, <span className="mono">pages_show_list</span>, <span className="mono">pages_read_engagement</span> y <span className="mono">business_management</span>. Acepta con tu cuenta de Facebook y elige tu página.</>,
+      <>Copia el token que sale arriba, pégalo aquí y pulsa <b>Conectar</b>.</>,
     ],
+    note: "No hace falta enviar la app a revisión de Meta: mientras sea tuya (modo desarrollo) puede publicar en tus propias cuentas.",
   },
 };
 
@@ -91,11 +93,20 @@ function PlatformCard({ st, onChange }: { st: PlatformStatus; onChange: () => vo
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(!st.connected);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function runCheck() {
+    setCheck({ ok: true, text: "Comprobando…" });
+    try {
+      const r = await api.checkInstagram();
+      setCheck({ ok: true, text: `Todo bien: puedo publicar en @${r.username}${r.media != null ? ` (${r.media} publicaciones)` : ""}${r.quota ? `. Hoy llevas ${r.used ?? 0} de ${r.quota} publicaciones por API.` : "."}` });
+    } catch (e) { setCheck({ ok: false, text: (e as Error).message }); }
+  }
 
   async function saveCreds() {
     setBusy(true);
     try {
-      if (st.id === "instagram") await api.configurePlatform("instagram", { accessToken: token });
+      if (st.id === "instagram") await api.configurePlatform("instagram", { appId: clientId.trim(), ...(secret ? { appSecret: secret } : {}), accessToken: token });
       else await api.configurePlatform(st.id, { clientId, ...(secret ? { clientSecret: secret } : {}) });
       setSecret(""); setToken("");
       toast(st.id === "instagram" ? "Instagram conectado" : "Datos guardados");
@@ -123,7 +134,10 @@ function PlatformCard({ st, onChange }: { st: PlatformStatus; onChange: () => vo
       {open && (
         <div className="conn__body">
           <ol className="conn__steps">{g.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
-          <a className="btn btn--sm" href={g.link} target="_blank" rel="noreferrer" style={{ alignSelf: "flex-start" }}><ExternalLink size={14} /> Abrir la consola de desarrolladores</a>
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <a className="btn btn--sm" href={g.link} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Abrir Meta for Developers</a>
+            {st.id === "instagram" && <a className="btn btn--sm" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer"><ExternalLink size={14} /> Abrir el Explorador de la API Graph</a>}
+          </div>
 
           {st.redirectUri && (
             <Field label="URI de redirección (cópiala en la consola)">
@@ -135,12 +149,29 @@ function PlatformCard({ st, onChange }: { st: PlatformStatus; onChange: () => vo
           )}
 
           {st.id === "instagram" ? (
-            <Field label="Token de acceso de Instagram">
-              <div className="row">
-                <input className="input mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={st.connected ? "•••••• (pega otro para cambiarlo)" : "IGAA…"} autoComplete="off" />
-                <button className="btn btn--primary" onClick={saveCreds} disabled={!token.trim() || busy}>{busy ? <Loader2 size={15} className="spin" /> : <Link2 size={15} />} Conectar</button>
+            <>
+              <div className="grid2">
+                <Field label="Identificador de la app"><input className="input mono" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="1234567890" autoComplete="off" /></Field>
+                <Field label="Clave secreta de la app"><input className="input mono" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={st.hasApp ? "•••••• (guardada)" : ""} autoComplete="off" /></Field>
               </div>
-            </Field>
+              <Field label="Token del Explorador de la API Graph" hint={!clientId.trim() || (!st.hasApp && !secret.trim()) ? "Sin el identificador y la clave secreta el token caduca en 1-2 horas." : undefined}>
+                <div className="row">
+                  <input className="input mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={st.connected ? "•••••• (pega otro para cambiarlo)" : "EAA…"} autoComplete="off" />
+                  <button className="btn btn--primary" onClick={saveCreds} disabled={!token.trim() || busy}>{busy ? <Loader2 size={15} className="spin" /> : <Link2 size={15} />} Conectar</button>
+                </div>
+              </Field>
+              {st.connected && (
+                <div className="row" style={{ flexWrap: "wrap" }}>
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    {st.expiresAt === 0 ? "El acceso no caduca." : st.expiresAt ? `El acceso caduca el ${new Date(st.expiresAt).toLocaleString("es-ES", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}.` : ""}
+                    {st.mode === "instagram" && " Conectada con token de Instagram: necesita la «Dirección pública» para publicar."}
+                  </span>
+                  <span className="spacer" />
+                  <button className="btn btn--sm" onClick={runCheck}>Comprobar conexión</button>
+                </div>
+              )}
+              {check && <div className={"note " + (check.ok ? "note--ok" : "note--bad")}>{check.text}</div>}
+            </>
           ) : (
             <>
               <div className="grid2">
