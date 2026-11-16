@@ -2,6 +2,7 @@
 // Se entra con correo y contraseña (/api/login) o, si va dentro del panel, con el token de su sesión (/api/session).
 // El servidor lo comprueba con Supabase y, si es admin, da una cookie propia para 12 horas.
 import { IS_SERVER, BASE, SUPABASE_URL, SUPABASE_KEY, WORKER_TOKEN, sign, safeEqual, checkSignedPath } from "./config.js";
+import { getSetting } from "./db.js";
 
 const COOKIE = "ps_s";
 const HOURS = 12;
@@ -30,7 +31,13 @@ function setSession(res, user) {
   res.setHeader("Set-Cookie", `${COOKIE}=${payload}.${sign(payload)}; Path=${BASE || "/"}; Max-Age=${HOURS * 3600}; HttpOnly; Secure; SameSite=Lax`);
 }
 
-export const isWorker = (req) => !!WORKER_TOKEN && safeEqual(req.headers["x-worker-token"] || "", WORKER_TOKEN);
+/** El PC se identifica con STUDIO_WORKER_TOKEN (EasyPanel) o con la clave creada desde la web («Conectar mi PC»). */
+export const isWorker = (req) => {
+  const got = String(req.headers["x-worker-token"] || "");
+  if (!got) return false;
+  const paired = getSetting("worker:token", "");
+  return (!!WORKER_TOKEN && safeEqual(got, WORKER_TOKEN)) || (!!paired && safeEqual(got, paired));
+};
 
 /** Rutas que no piden sesión: la propia entrada, el PC que edita (lleva su token) y la vuelta de las redes. */
 const OPEN = [/^\/api\/(session|login|logout)$/,/^\/api\/worker\//, /^\/api\/auth\/[a-z]+\/callback$/];

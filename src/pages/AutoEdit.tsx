@@ -79,20 +79,33 @@ function ClaudeLoginNote({ worker, onReady }: { worker?: AutoInfo["worker"]; onR
       await autoApi.recheck();
       const i = await autoApi.info();
       onReady(i);
-      toast(i.claude ? "Claude está listo: editará él" : "Claude sigue sin sesión en este ordenador", i.claude ? undefined : "bad");
+      toast(i.claude ? "Claude está listo: editará él" : i.worker && !i.worker.online ? "Tu PC todavía no está conectado" : "Claude sigue sin sesión en este ordenador", i.claude ? undefined : "bad");
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
+  async function pair() {
+    try {
+      const r = await fetch("/api/pc/pair", { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || "No se pudo crear la conexión");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+      a.download = "worker.json";
+      a.click();
+      toast("Guarda worker.json en la carpeta pulso-studio/data y abre «Editor Pulso Studio.cmd»");
+    } catch (e) { toast((e as Error).message, "bad"); }
   }
   return (
     <div className="note note--warn ae-login">
       <Terminal size={18} />
       <div>
         {worker && !worker.online ? (
-          <><b>Tu PC está apagado o sin conexión.</b> Los vídeos que subas esperan en cola y tu PC los edita en cuanto lo enciendas (con «npm run worker» en la carpeta de Pulso Studio).</>
+          <><b>Tu PC no está conectado.</b> Los vídeos que subas esperan en cola y tu PC los edita en cuanto abras «Editor Pulso Studio.cmd» (carpeta pulso-studio). Si es la primera vez, pulsa «Conectar mi PC», guarda el archivo <code>worker.json</code> en <code>pulso-studio/data</code> y abre el editor.</>
         ) : (
           <><b>Claude no tiene la sesión iniciada{worker ? " en tu PC" : " en este ordenador"}.</b> Es quien decide los cortes, las palabras clave, los ángulos de cada short y qué gráfico va en cada frase. Inicia sesión en Claude y pulsa «Comprobar».</>
         )}
         <div className="row" style={{ marginTop: 10 }}>
           <button className="btn btn--sm btn--primary" disabled={busy} onClick={check}>{busy ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />} Comprobar</button>
+          {worker && !worker.online && <button className="btn btn--sm" onClick={pair}><Download size={14} /> Conectar mi PC</button>}
         </div>
       </div>
     </div>

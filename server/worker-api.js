@@ -4,7 +4,8 @@ import multer from "multer";
 import { join, basename } from "node:path";
 import { existsSync, renameSync, rmSync, statSync } from "node:fs";
 import { db, DIRS, now, row, getSetting, setSetting } from "./db.js";
-import { IS_SERVER } from "./config.js";
+import { randomBytes } from "node:crypto";
+import { IS_SERVER, BASE } from "./config.js";
 import { isWorker } from "./auth.js";
 import { setJob, setItem } from "./autoedit/pipeline.js";
 import { STYLE_DIR } from "./style.js";
@@ -22,6 +23,14 @@ export function registerWorkerRoutes(app, wrap) {
   if (!IS_SERVER) return;
   const guard = (req, res, next) => (isWorker(req) ? next() : res.status(401).json({ error: "Token del PC incorrecto." }));
   const up = multer({ dest: DIRS.tmp, limits: { fileSize: 8 * 1024 ** 3 } });
+
+  // «Conectar mi PC» (con la sesión de admin): da el archivo de configuración para el editor del PC
+  app.post("/api/pc/pair", wrap((req, res) => {
+    let token = getSetting("worker:token", "");
+    if (!token || req.body?.renew) { token = randomBytes(32).toString("base64url"); setSetting("worker:token", token); }
+    const server = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}${BASE}`).replace(/\/+$/, "");
+    res.json({ server, token });
+  }));
 
   app.post("/api/worker/hello", guard, wrap((req, res) => {
     setSetting("worker:status", { at: Date.now(), claude: !!req.body?.claude, busy: req.body?.busy || null, version: req.body?.version || null });
