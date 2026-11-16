@@ -16,6 +16,7 @@ import { registerInsightsRoutes, startInsightsPoller } from "./insights.js";
 import { IS_SERVER, BASE, MODE } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { registerWorkerRoutes } from "./worker-api.js";
+import { registerPresetRoutes } from "./presets.js";
 
 // En modo servidor todo cuelga de BASE (/studio), que es como lo sirve el panel de ChipsFinder
 const root = express();
@@ -321,6 +322,7 @@ registerAutoeditRoutes(app, wrap);
 /* ---------- Estilo de edición ---------- */
 
 registerStyleRoutes(app, wrap);
+registerPresetRoutes(app, wrap);
 
 /* ---------- Resultados (visitas de cada publicación) ---------- */
 

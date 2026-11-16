@@ -76,8 +76,8 @@ ${wordList(words)}
 
 Devuelve el plan de edición. Reglas:
 1. "phrases": cubre TODAS las palabras en orden, sin saltos ni solapes. Una frase = una idea (acaba en punto, coma fuerte o pausa). Cada frase tiene "chunks" (rangos [desde,hasta] de 1-3 palabras que se leen juntos con sentido: nunca acabes un chunk en «de», «y», «que», «el», «la», «un», «a», «en»; esas van al principio del siguiente) y "key" = índice del chunk que lleva la PALABRA CLAVE (una por frase, la que más importa). El chunk clave debe tener SOLO la palabra clave o la expresión clave (1-2 palabras, p. ej. «automático», «30 reuniones»), sin artículos ni conjunciones.
-2. "graphics": un gráfico por idea, disparado en su palabra ("from" = índice de la palabra que lo provoca, "to" = índice hasta el que se queda, 2-5 s). Uno cada 4-7 s aprox., nunca dos a la vez. Nada inventado: solo lo que dice la persona. Marca en "layouts" en qué versiones va: "reference" (todos), "headline" y "framed" (los 2-4 más fuertes), "horizontal" (3-5), "minimal" (solo stat).
-3. "behind": 2-3 palabras gigantes (1 palabra, MAYÚSCULAS, la idea fuerte) que salen detrás de la cabeza durante 1-2 s en su palabra; no coincidan con gráficos.
+2. "graphics": menos es más (edición cinematográfica y limpia, no un gráfico todo el rato). Solo donde un gráfico APORTA algo que el subtítulo no da (un número que sube, una lista, una comparación); como mucho uno cada 8-12 s y nunca dos a la vez. Prohibido: tarjetas o etiquetas que repitan las mismas palabras del subtítulo, el mismo dato dos o tres veces (etiqueta + subtítulo + rótulo), textos que se pisen, anillos o contadores vacíos o encimados. Disparado en su palabra ("from" = índice de la palabra que lo provoca, "to" = índice hasta el que se queda, 2-5 s). Textos en minúscula normal (no «Por Mes»). Nada inventado: solo lo que dice la persona. Marca en "layouts" en qué versiones va: "reference" (todos), "headline" y "framed" (los 2-4 más fuertes), "horizontal" (3-5), "minimal" (solo stat).
+3. "behind": 1-2 palabras gigantes (1 palabra, MAYÚSCULAS, la idea fuerte) que salen detrás de la cabeza durante 1-2 s en su palabra; no coincidan con gráficos.
 4. "zooms": 4-8 zooms suaves (to entre 1.03 y 1.10) hacia los momentos importantes; el primero a 0 con to 1.0 (el gancho se asienta desde 1.08).
 5. "hook": titular corto y potente (máx. 6 palabras) que resuma el valor del vídeo, y subtítulo opcional (máx. 5 palabras).
 ${styleNotes ? `ESTILO DEL USUARIO (manda sobre lo demás):
@@ -248,9 +248,14 @@ function heuristicPlan(words) {
 /* ---------- 3 · Del plan a la entrada del renderizador ---------- */
 
 /** Subtítulos con tiempos: cada trozo dura hasta el siguiente (+0,35 s de cola como mucho), nunca menos de 0,4 s. */
-export function buildCaptions(plan, words) {
+export function buildCaptions(plan, words, maxWords = 0) {
   const chunks = [];
-  plan.phrases.forEach((ph, p) => ph.chunks.forEach(([a, b], k) => chunks.push({ a, b, key: k === ph.key, phrase: p })));
+  plan.phrases.forEach((ph, p) => ph.chunks.forEach(([a, b], k) => {
+    // El estilo manda: si pide N palabras como máximo, los trozos largos se parten
+    if (maxWords > 0 && b - a + 1 > maxWords) {
+      for (let x = a; x <= b; x += maxWords) chunks.push({ a: x, b: Math.min(b, x + maxWords - 1), key: k === ph.key, phrase: p });
+    } else chunks.push({ a, b, key: k === ph.key, phrase: p });
+  }));
   return chunks.map((c, i) => {
     const start = words[c.a].start;
     const nextStart = i + 1 < chunks.length ? words[chunks[i + 1].a].start : Infinity;
@@ -267,7 +272,9 @@ export function buildCaptions(plan, words) {
 export function renderInputFor(variant, plan, words, { workDir, base, duration, style = null }) {
   const T = (i) => words[Math.min(words.length - 1, Math.max(0, i))].start;
   const E = (i) => words[Math.min(words.length - 1, Math.max(0, i))].end;
-  const pick = plan.graphics.filter((g) => g.layouts.includes(variant.layout));
+  // Estilo sin gráficos: solo subtítulos y zooms, pase lo que pase en el plan
+  const noGraphics = style?.graphics === "none";
+  const pick = noGraphics ? [] : plan.graphics.filter((g) => g.layouts.includes(variant.layout));
   // Tiempos: entra 30 ms antes de su palabra; se queda hasta "to" + 0,6 s, sin pisar al siguiente
   const graphics = [];
   pick.forEach((g, k) => {
@@ -282,7 +289,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
     graphics.push(out);
   });
   // Palabras detrás de la cabeza: solo en la versión de referencia y si hay recorte
-  if (variant.layout === "reference") {
+  if (variant.layout === "reference" && !noGraphics) {
     for (const b of plan.behind) {
       const start = Math.max(0, T(b.from) - 0.03);
       const end = Math.min(duration, Math.max(start + 1.2, E(b.to) + 0.3));
@@ -292,11 +299,26 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
   }
   const hide = graphics.filter((g) => g.type === "scene" || g.type === "behind").map((g) => [g.start, g.end]);
   const zoomK = variant.layout === "minimal" ? 1.5 : 1;
-  const zooms = plan.zooms.map((z) => ({ t: +T(z.at).toFixed(3), to: +Math.min(1.1, 1 + (z.to - 1) * zoomK).toFixed(3), dur: z.dur, ease: "power2.inOut" }));
+  const zs = style?.motion?.zoomStyle;
+  const zMax = Math.min(1.25, Math.max(1, Number(style?.motion?.zoomMax) || 1.1));
+  let zooms;
+  if (zs === "none") zooms = [];
+  else if (zs === "punch") {
+    // Zoom de golpe al empezar frases (como un corte de cámara): alterna plano normal y cerrado, nunca dos seguidos en < 2,5 s
+    zooms = [];
+    let last = -9, close = false;
+    plan.phrases.forEach((ph) => {
+      const t = T(ph.chunks[0][0]);
+      if (t - last < 2.5 || t < 0.5) return;
+      close = !close;
+      zooms.push({ t: +t.toFixed(3), to: +(close ? zMax : 1).toFixed(3), dur: 0, ease: "cut" });
+      last = t;
+    });
+  } else zooms = plan.zooms.map((z) => ({ t: +T(z.at).toFixed(3), to: +Math.min(zMax, 1 + (z.to - 1) * zoomK).toFixed(3), dur: z.dur, ease: "power2.inOut" }));
   return {
     workDir, layout: variant.layout, width: variant.width, height: variant.height, fps: 30, duration,
     base, words: words.map((w) => ({ w: w.w, s: w.start, e: w.end })),
-    captions: buildCaptions(plan, words),
+    captions: buildCaptions(plan, words, Number(style?.caption?.maxWords) || 0),
     hook: ["headline", "horizontal", "framed"].includes(variant.layout) ? plan.hook : null,
     graphics, zooms, captionStyle: variant.captionStyle, theme: variant.theme, hideCaptionsDuring: hide,
     ...(style ? { style } : {}),

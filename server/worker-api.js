@@ -9,6 +9,7 @@ import { IS_SERVER, BASE } from "./config.js";
 import { isWorker } from "./auth.js";
 import { setJob, setItem } from "./autoedit/pipeline.js";
 import { STYLE_DIR } from "./style.js";
+import { nextPresetTask } from "./presets.js";
 
 const STALE_MIN = 15; // si el PC no da señales en 15 min, el trabajo vuelve a la cola
 
@@ -45,6 +46,8 @@ export function registerWorkerRoutes(app, wrap) {
       setSetting("worker:analyzeDone", ask);
       return res.json({ type: "analyze" });
     }
+    const preset = nextPresetTask();
+    if (preset) return res.json(preset);
     for (const m of db.prepare("SELECT * FROM media WHERE transcript_status = 'running' ORDER BY created_at").all()) {
       if (Date.now() - (claimedTx.get(m.id) || 0) < STALE_MIN * 60e3) continue;
       claimedTx.set(m.id, Date.now());

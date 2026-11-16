@@ -5,6 +5,7 @@ import { Check, ImagePlus, Loader2, Palette, Play, RotateCcw, Sparkles, Trash2, 
 import { styleApi, fontFamily, type AutoSettings, type EditStyle, type StyleAsset } from "../style-api";
 import { autoApi, type AutoVariant } from "../autoedit-api";
 import { Field, Switch, useToast } from "../ui";
+import Presets from "./Presets";
 import "./style.css";
 
 const SAMPLE = { before: "Te garantizamos", key: "30 reuniones", after: "al mes" };
@@ -96,6 +97,8 @@ export default function StylePage() {
           <span className={"st-saved" + (saved === "ok" ? " is-ok" : "")}>{saved === "ok" ? <><Check size={14} /> Guardado</> : <><Loader2 size={14} className="spin" /> Guardando…</>}</span>
         </div>
       </div>
+
+      <Presets refs={refs} onApplied={() => styleApi.get().then((r) => { first.current = true; setStyle(r.style); setAssets(r.assets); setReplay((n) => n + 1); }).catch(() => {})} />
 
       <div className="st-grid">
         <div className="st-col">

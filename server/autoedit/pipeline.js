@@ -1,6 +1,6 @@
 // Orquestador de la auto-edición: de un vídeo hablado → 5 versiones editadas (o varios shorts de un vídeo largo).
 // Cada versión se entrega en cuanto termina (aparece en la revisión), sin esperar a las demás.
-import { mkdirSync, writeFileSync, readFileSync, existsSync, linkSync, copyFileSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, linkSync, copyFileSync, statSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { db, DIRS, DATA, uid, now, row } from "../db.js";
@@ -150,6 +150,8 @@ export const GRADES = {
   cool: { label: "frío", vf: "colorbalance=rs=-0.04:gs=0:bs=0.05:rm=-0.02:bm=0.03,eq=saturation=1.03" },
   punchy: { label: "contrastado", vf: "eq=contrast=1.1:saturation=1.16:gamma=0.98" },
   soft: { label: "suave", vf: "eq=contrast=0.94:saturation=0.94:brightness=0.015" },
+  // Cine: sombras hacia el verde azulado, piel cálida, contraste suave y algo menos de saturación
+  cinematic: { label: "cine", vf: "colorbalance=rs=-0.04:gs=0.0:bs=0.05:rh=0.05:gh=0.01:bh=-0.04,eq=contrast=1.06:saturation=0.9:gamma=0.97" },
 };
 const SHORT_LAYOUTS = ["reference", "headline", "minimal", "framed"];
 const FRAMING_KEYS = ["wide", "medium", "close"];
@@ -169,7 +171,11 @@ export function lookFor(k) {
 /** base.mp4 = cut.mp4 con el plano (zoom digital centrado en la cara) y el color de este short. */
 async function buildBase(work, look) {
   const out = join(work, "base.mp4");
-  if (existsSync(out)) return out;
+  // Si cambia el plano o el color (otro estilo), se rehace
+  const sig = join(work, "base.json"), want = JSON.stringify({ framing: look.framing, grade: look.grade });
+  if (existsSync(out) && existsSync(sig) && readFileSync(sig, "utf8") === want) return out;
+  rmSync(out, { force: true });
+  writeFileSync(sig, want);
   const z = FRAMINGS[look.framing]?.zoom ?? 1;
   const vf = [];
   // Recorte hacia arriba (la cara suele estar en el tercio superior), luego vuelta a 1080×1920
@@ -352,6 +358,10 @@ export async function runJob(id) {
     setJob(id, { plan, brain: plan.brain });
   }
   const variants = VARIANTS.filter((v) => opts.variants.includes(v.key));
+  // Color del estilo (p. ej. cine) también en las versiones
+  const grade = getStyle().grade;
+  if (grade && grade !== "neutral") await buildBase(src, { framing: "wide", grade });
+  else rmSync(join(src, "base.mp4"), { force: true });
   const matte = variants.some((v) => v.layout === "reference") && (plan.behind?.length ?? 0) > 0 ? await ensureMatte(job, src) : null;
 
   // Una fila por versión (si no existen ya)
@@ -411,7 +421,10 @@ async function runShorts(job, { src, raw, info, useClaude }) {
       writeFileSync(join(work, "words-raw.json"), JSON.stringify({ words: raw }));
       setItem(it.id, { status: "rendering", step: "Cortando el short", progress: 0.02 });
       const words = await cutTake(job, work, raw, { ranges: it.short.ranges, useClaude });
-      const look = it.short.look || lookFor(it.idx);
+      const look = { ...(it.short.look || lookFor(it.idx)) };
+      // Con un estilo calcado, el color es el del estilo (el plano sigue variando para que no parezcan iguales)
+      const sg = getStyle().grade;
+      if (sg && sg !== "neutral") look.grade = sg;
       const variant = VARIANTS.find((v) => v.layout === look.layout) || VARIANTS[0];
       let plan = it.post?.plan;
       if (!plan) {

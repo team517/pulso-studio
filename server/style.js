@@ -26,7 +26,11 @@ export const DEFAULT_STYLE = {
   motion: { intensity: 2 },
   logo: null,                                                     // { id, position, size }
   music: "auto",                                                  // auto (una por versión) | synthwave | lofi | none
-  graphics: "balanced",                                           // few | balanced | many
+  graphics: "balanced",                                           // none | few | balanced | many
+  look: null,                                                     // { grain, vignette, letterbox } (cine)
+  grade: "neutral",                                               // color de la imagen: neutral | warm | cool | punchy | soft | cinematic
+  rules: [],                                                      // reglas concretas sacadas de un estilo guardado
+  activePreset: null,                                             // estilo guardado en uso
   notes: "",                                                      // instrucciones para la IA
   aiNotes: "",                                                    // lo que la IA vio en las referencias
   palette: [],                                                    // colores sacados de las referencias
@@ -62,6 +66,8 @@ export function toRenderStyle() {
     caption: s.caption,
     cards: s.cards,
     motion: s.motion,
+    ...(s.look ? { look: s.look } : {}),
+    graphics: s.graphics, // lo usa plan.js (none = sin gráficos); el render lo ignora
     logo: logoA ? { file: join(STYLE_DIR, logoA.file), position: s.logo.position || "top-right", size: Math.min(0.2, Math.max(0.06, Number(s.logo.size) || 0.1)) } : null,
   };
 }
@@ -70,9 +76,14 @@ export function toRenderStyle() {
 export function styleNotesForAI() {
   const s = getStyle();
   const parts = [];
-  if (s.graphics === "few") parts.push("Pocos gráficos: solo los 3-4 momentos más fuertes.");
+  if (s.graphics === "none") parts.push("SIN GRÁFICOS: nada de tarjetas, iconos, escenas ni palabras detrás de la cabeza. Solo subtítulos y zooms (graphics y behind vacíos).");
+  if (s.graphics === "few") parts.push("Pocos gráficos: como mucho 2-3 en todo el vídeo, solo donde aporten un dato que NO dice el subtítulo.");
   if (s.graphics === "many") parts.push("Muchos gráficos: casi cada idea con su gráfico, ritmo alto.");
   if (s.caption.uppercase) parts.push("Los textos de pantalla van en MAYÚSCULAS.");
+  if (s.caption.maxWords) parts.push(`Subtítulos de ${s.caption.maxWords} palabra(s) como máximo por chunk.`);
+  if (s.motion?.zoomStyle === "punch") parts.push("Zooms de golpe al empezar algunas frases (como cortes de cámara), no zooms lentos.");
+  if (s.motion?.zoomStyle === "none") parts.push("Sin zooms.");
+  if (Array.isArray(s.rules) && s.rules.length) parts.push("Reglas del estilo elegido (calcarlas):\n- " + s.rules.join("\n- "));
   if (s.aiNotes) parts.push("Estilo visto en sus referencias: " + s.aiNotes);
   if (s.rhythm?.cutsPerMin) parts.push(`Ritmo de sus referencias: unos ${s.rhythm.cutsPerMin} cambios visuales por minuto (cortes, gráficos o zooms): mantén ese ritmo, un estímulo nuevo cada ~${Math.max(1.5, Math.round(600 / s.rhythm.cutsPerMin) / 10)} s.`);
   if (s.notes) parts.push("Instrucciones del usuario (obligatorias): " + s.notes);

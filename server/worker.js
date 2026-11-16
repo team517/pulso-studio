@@ -122,7 +122,7 @@ async function syncStyle() {
   setSetting("autoedit:auto", s.auto || {});
   mkdirSync(STYLE_DIR, { recursive: true });
   const ids = new Set();
-  for (const a of s.assets) {
+  for (const a of s.assets.filter((x) => x.kind !== "preset")) { // los vídeos de los estilos guardados solo hacen falta al analizarlos
     ids.add(a.id);
     const f = join(STYLE_DIR, a.file);
     if (!existsSync(f)) await download(`/api/worker/style/file/${encodeURIComponent(a.file)}`, f);
@@ -262,6 +262,46 @@ async function doAnalyze() {
   if (r.seen) await call("POST", "/api/worker/style/analysis", { aiNotes: r.aiNotes, aiSuggested: s.aiSuggested || null });
 }
 
+async function doPreset({ preset, assets }) {
+  busy = `Claude está estudiando el estilo «${preset.name}»`;
+  log(busy);
+  const state = (b) => call("POST", `/api/worker/presets/${preset.id}/state`, b).catch((e) => log("Sin conexión con el panel:", e.message));
+  try {
+    mkdirSync(STYLE_DIR, { recursive: true });
+    await state({ step: "Descargando los vídeos en tu PC" });
+    const files = [];
+    for (const a of assets) {
+      const f = join(STYLE_DIR, a.file);
+      if (!existsSync(f)) await download(`/api/worker/style/file/${encodeURIComponent(a.file)}`, f);
+      files.push(f);
+    }
+    await state({ step: "Claude está estudiando los vídeos fotograma a fotograma" });
+    const { analyzePresetFiles, downloadGoogleFont } = await import("./preset-analyze.js");
+    const r = await analyzePresetFiles(files, join(DATA, "tmp", "preset-" + preset.id));
+    const fonts = {};
+    for (const role of ["caption", "keyword"]) {
+      const want = r.fontsWanted[role];
+      if (!want) continue;
+      await state({ step: `Descargando la tipografía (${want.families[0]})` });
+      const got = await downloadGoogleFont(want.families, want.weight, join(DATA, "tmp", "fonts"));
+      if (!got) { log(`No encontré ${want.families.join(" / ")} en Google Fonts`); continue; }
+      const fd = new FormData();
+      fd.append("family", got.family);
+      fd.append("filename", `${got.family} ${got.weight}${got.file.slice(got.file.lastIndexOf("."))}`);
+      fd.append("file", await openAsBlob(got.file), basename(got.file));
+      const up = await call("POST", `/api/worker/presets/${preset.id}/font`, fd);
+      fonts[role] = up.id;
+      if (role === "caption") r.style.caption.weight = got.weight;
+    }
+    r.style.fonts = { caption: fonts.caption || null, keyword: fonts.keyword || (r.style.caption.keywordFont === "same" ? fonts.caption || null : null), title: fonts.caption || null };
+    await state({ status: "ready", step: "Listo", name: r.name, style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw } });
+    log(`Estilo «${r.name}» listo`);
+  } catch (e) {
+    log("No se pudo analizar el estilo:", e.message);
+    await state({ status: "error", step: null, error: String(e.message || e).slice(0, 500) });
+  }
+}
+
 /* ---------- Bucle ---------- */
 
 log(`Pulso Studio · tu PC edita para ${SERVER}`);
@@ -281,6 +321,7 @@ for (;;) {
     if (task.type === "job") await doJob(task);
     else if (task.type === "transcribe") await doTranscribe(task);
     else if (task.type === "analyze") await doAnalyze();
+    else if (task.type === "preset") await doPreset(task);
   } catch (e) {
     log("Fallo:", e.message);
     if (task.type === "job") await call("POST", `/api/worker/jobs/${task.job.id}/state`, { job: { status: "error", error: String(e.message).slice(0, 800) }, items: [] }).catch(() => {});

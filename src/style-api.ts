@@ -46,3 +46,40 @@ export const styleApi = {
 
 /** Nombre CSS con el que se carga cada fuente subida (para la vista previa). */
 export const fontFamily = (a: StyleAsset) => `uf-${a.id}`;
+
+/* ---------- Estilos guardados ---------- */
+
+export type PresetCaption = EditStyle["caption"] & {
+  yPct?: number; scale?: number; weight?: number; maxWords?: number; lines?: number;
+  stroke?: { color: string; width: number } | null; shadow?: "none" | "soft" | "strong";
+  bg?: { color: string; opacity: number; radius: number } | null; letterSpacing?: number;
+  keywordColor?: string; keywordScale?: number; keywordFont?: "same" | "keyword";
+};
+export type StylePreset = {
+  id: string; name: string; status: "queued" | "analyzing" | "ready" | "error"; step: string | null; error: string | null;
+  created_at: string; updated_at: string; active: boolean;
+  videos: { id: string; name: string; url: string; video: boolean }[];
+  style: {
+    caption: PresetCaption; colors: Partial<EditStyle["colors"]>;
+    motion: { intensity: number; zoomStyle?: "smooth" | "punch" | "none"; zoomMax?: number };
+    look?: { grain: number; vignette: number; letterbox: boolean }; grade?: string; graphics?: string; music?: string;
+    rhythm?: { cutsPerMin: number; seconds: number } | null; rules?: string[];
+  } | null;
+  analysis: { summary: string; fonts?: Record<string, { families: string[]; seen: string } | null>; frames?: number } | null;
+  fonts: { caption: string | null; keyword: string | null } | null;
+};
+
+export const presetsApi = {
+  list: () => req<StylePreset[]>("GET", "/api/presets"),
+  create: (name: string, files: File[], assetIds: string[] = []) => {
+    const fd = new FormData();
+    fd.append("name", name);
+    fd.append("assetIds", JSON.stringify(assetIds));
+    files.forEach((f) => fd.append("files", f));
+    return req<StylePreset>("POST", "/api/presets", fd);
+  },
+  use: (id: string) => req("POST", `/api/presets/${id}/use`),
+  analyze: (id: string) => req<StylePreset>("POST", `/api/presets/${id}/analyze`),
+  rename: (id: string, name: string) => req<StylePreset>("PUT", `/api/presets/${id}`, { name }),
+  remove: (id: string) => req("DELETE", `/api/presets/${id}`),
+};

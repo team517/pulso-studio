@@ -92,9 +92,9 @@ async function claudeLoggedIn() {
   return loginCache.ok;
 }
 
-async function askClaudeCli(prompt, { images = [], dir = null, timeoutMs = 8 * 60e3 } = {}) {
+async function askClaudeCli(prompt, { images = [], dir = null, timeoutMs = 8 * 60e3, maxTurns = 15 } = {}) {
   const args = ["-p", "--output-format", "json"];
-  if (images.length && dir) args.push("--allowedTools", "Read", "--add-dir", `"${dir}"`, "--max-turns", "15");
+  if (images.length && dir) args.push("--allowedTools", "Read", "--add-dir", `"${dir}"`, "--max-turns", String(Math.max(15, maxTurns)));
   // Sin imágenes no necesita herramientas; si aun así intenta usar alguna, se le deniega y contesta en el turno siguiente
   else args.push("--max-turns", "4");
   const full = images.length
