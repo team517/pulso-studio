@@ -63,8 +63,12 @@ export function defaultChoice(subs) {
 }
 
 /** Aplica la elección al estilo del preset (devuelve un estilo nuevo). */
-export function withChoice(style, subs, choice) {
-  const sub = subs.find((x) => x.id === choice.subtitle);
+export function withChoice(style, subs, choice, graphics) {
+  // Gráficos copiados: solo los elegidos
+  if (Array.isArray(graphics) && Array.isArray(choice?.graphics)) {
+    style = { ...style, templates: graphics.filter((g) => choice.graphics.includes(g.id)).map(({ sample, render, video, ...t }) => t) };
+  }
+  const sub = subs.find((x) => x.id === choice?.subtitle);
   if (!sub) return style;
   const kw = choice.keyword ? subs.find((x) => x.id === choice.keyword) : null;
   const c = captionFrom(sub, kw);

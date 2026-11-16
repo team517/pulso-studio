@@ -23,10 +23,28 @@ const wordList = (words) => words.map((w, i) => `${i}\t${w.start.toFixed(2)}\t${
 
 /* ---------- 1 · Qué cortar ---------- */
 
+/** Claude lo intenta hasta 3 veces (con calma); si no sale, el trabajo se para con el motivo (nunca se edita «por reglas» sin pedirlo). */
+async function withClaude(label, fn) {
+  let last;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fn();
+      if (r) return r;
+      last = new Error("respuesta no válida");
+    } catch (e) {
+      if (e instanceof NeedLogin) throw e;
+      last = e;
+    }
+    console.warn(`[autoedit] ${label}: intento ${i + 1} falló:`, last?.message);
+    if (i < 2) await new Promise((ok) => setTimeout(ok, 5000 + i * 10000));
+  }
+  throw new Error(`Claude no ha podido ${label} tras 3 intentos (${String(last?.message || last).slice(0, 200)}). Pulsa «Reintentar».`);
+}
+
 export async function decideCuts(words, { vocab = "", useClaude = true } = {}) {
   const { pauses, repeats } = findIssues(words);
   if (useClaude) {
-    try {
+    return withClaude("decidir los cortes", async () => {
       const prompt = `Eres editor de vídeo profesional de reels en español. Te paso la transcripción palabra a palabra de una toma hablada a cámara (índice, segundo, palabra; "(?)" = Whisper no está seguro).
 Decide qué QUITAR para que quede fluido: tomas falsas (cuando repite una frase, quédate con la ÚLTIMA buena), arranques fallidos, muletillas («eh», «em», «o sea» sueltos), tartamudeos y frases cortadas que luego repite. NO quites contenido con sentido y NUNCA quites negaciones («no», «sin», «ni», «nunca»…) ni palabras que cambien lo que se dice. Si dudas, no lo quites. Las pausas se quitan solas, no hace falta que las marques.
 Corrige también palabras que Whisper ha oído MAL (nombres, marcas, términos técnicos que no existen como «Codefemail» → «cold email»). NUNCA cambies cifras, años, fechas ni datos que suenan bien escritos: no corrijas lo que dice la persona, solo lo que Whisper transcribió mal.${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
@@ -43,10 +61,7 @@ Responde SOLO con JSON:
       const r = await askClaude(prompt);
       const drop = safeDrops(words, (Array.isArray(r.drop) ? r.drop : []).filter((d) => Array.isArray(d) && d.length === 2 && d[0] <= d[1] && d[0] >= 0 && d[1] < words.length));
       return { drop, fixes: r.fixes && typeof r.fixes === "object" ? r.fixes : {}, summary: r.resumen || "", brain: lastProvider() || "claude" };
-    } catch (e) {
-      if (!(e instanceof NeedLogin)) console.warn("[autoedit] cortes con Claude fallaron, uso reglas:", e.message);
-      else throw e;
-    }
+    });
   }
   return { drop: heuristicDrops(words), fixes: {}, summary: "Cortes por reglas: pausas y repeticiones.", brain: "reglas" };
 }
@@ -67,7 +82,7 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "", angle = "", hook = "" } = {}) {
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
-    try {
+    return withClaude("planificar la edición", async () => {
       const prompt = `Eres el editor de un reel profesional en español (estilo anuncio B2B: persona hablando a cámara con micro, subtítulos de 1-3 palabras a la altura del pecho, tarjetas de cristal con iconos que aparecen JUSTO en la palabra que las nombra, palabras gigantes detrás de la cabeza, una escena a pantalla completa, zooms suaves).
 Te paso la transcripción YA CORTADA (índice, segundo, palabra). Duración: ${duration.toFixed(1)} s.${vocab ? `\nVocabulario: ${vocab}` : ""}
 
@@ -95,12 +110,8 @@ Responde SOLO con JSON:
  "zooms":[{"at":0,"to":1.0,"dur":1.6},{"at":i,"to":1.05,"dur":1.6}]}`;
       const plan = await askClaude(prompt);
       const fixed = validatePlan(plan, words);
-      if (fixed) return { ...fixed, brain: lastProvider() || "claude" };
-      console.warn("[autoedit] plan de Claude no válido, uso reglas");
-    } catch (e) {
-      if (e instanceof NeedLogin) throw e;
-      console.warn("[autoedit] plan con Claude falló, uso reglas:", e.message);
-    }
+      return fixed ? { ...fixed, brain: lastProvider() || "claude" } : null;
+    });
   }
   return { ...heuristicPlan(words), brain: "reglas" };
 }
@@ -330,7 +341,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
 export async function pickShorts(words, { count = 3, vocab = "", useClaude = true } = {}) {
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
-    try {
+    return withClaude("elegir los shorts", async () => {
       const r = await askClaude(`Eres editor de shorts virales en español. De esta transcripción de un vídeo largo (${(duration / 60).toFixed(1)} min), saca ${count} shorts de 25-60 s cada uno que NO PAREZCAN EL MISMO VÍDEO:
 - Cada short trata una idea distinta (nada de dos shorts sobre lo mismo) y tiene un ÁNGULO distinto: consejo práctico, historia/caso real, error común, lista de pasos, dato sorprendente, opinión polémica, pregunta al público, antes/después, mito vs realidad.
 - Empieza con un gancho fuerte en la primera frase (si la mejor frase de gancho está más adelante, puedes empezar el short por ella y seguir con el resto: usa varios tramos).
@@ -356,11 +367,8 @@ Responde SOLO con JSON:
           for (const [a, b] of s.ranges) for (let i = a; i <= b; i++) used.add(i);
           return true;
         });
-      if (list.length) return list;
-    } catch (e) {
-      if (e instanceof NeedLogin) throw e;
-      console.warn("[autoedit] selección de shorts con Claude falló:", e.message);
-    }
+      return list.length ? list : null;
+    });
   }
   // Reglas: trozos de ~45 s que empiezan y acaban en final de frase
   const out = [];

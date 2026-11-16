@@ -26,7 +26,8 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { if (res.ok) throw new Error("Respuesta rara del servidor: vuelve a intentarlo"); }
   if (!res.ok) throw new Error(data?.error || `Error ${res.status}`);
   return data as T;
 }
@@ -67,12 +68,18 @@ export type StylePreset = {
   } | null;
   analysis: {
     summary?: string; fonts?: Record<string, { families: string[]; seen: string } | null>; frames?: number;
-    progress?: PresetProgress; subtitles?: PresetSub[]; choice?: { subtitle: string | null; keyword: string | null };
+    progress?: PresetProgress; subtitles?: PresetSub[]; graphics?: PresetGfx[]; choice?: { subtitle: string | null; keyword: string | null; graphics?: string[] };
     zooms?: { video: number; name: string; zoomStyle?: string; zoomMax?: number; perMin?: number; list?: { t: number; kind: string; to: number; secs?: number }[] }[];
   } | null;
   fonts: { caption: string | null; keyword: string | null } | null;
 };
 
+/** Un gráfico de una referencia recreado en HTML+CSS (plantilla que el render rellena con los textos del vídeo). */
+export type PresetGfx = {
+  id: string; video: number; name: string; kind: string; use: string; hasIcon: boolean; icon: string | null;
+  fields: { key: string; label: string; example: string; max: number }[]; html: string; css: string; width: number; height: number;
+  anim: { in: string; ms: number }; sample: { url: string; t: number }; render: string | null;
+};
 export type PresetProgress = { videos: { name: string; pct: number; step: string }[]; pct: number; step: string };
 /** Un estilo de texto encontrado en un vídeo de referencia (con recortes reales y la tira de su animación). */
 export type PresetSub = {
@@ -85,6 +92,7 @@ export type PresetSub = {
 
 export const presetsApi = {
   choose: (id: string, subtitle: string, keyword: string | null, use = true) => req<StylePreset>("POST", `/api/presets/${id}/choose`, { subtitle, keyword, use }),
+  chooseGraphics: (id: string, graphics: string[], use = true) => req<StylePreset>("POST", `/api/presets/${id}/choose`, { graphics, use }),
   list: () => req<StylePreset[]>("GET", "/api/presets"),
   create: (name: string, files: File[], assetIds: string[] = []) => {
     const fd = new FormData();

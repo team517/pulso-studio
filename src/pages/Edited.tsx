@@ -26,7 +26,12 @@ export default function Edited() {
   const [q, setQ] = useState("");
   const [play, setPlay] = useState<EditedItem | null>(null);
 
-  const load = useCallback(() => fetch("/api/autoedit/library").then((r) => r.json()).then(setList).catch((e) => { setList([]); toast(String(e), "bad"); }), [toast]);
+  // Lectura a prueba de reinicios: si la respuesta llega vacía, se conserva lo que había y se vuelve a pedir
+  const load = useCallback(() => fetch("/api/autoedit/library").then(async (r) => {
+    const t = await r.text();
+    if (!r.ok || !t) throw new Error(r.status === 401 ? "Sin sesión" : "");
+    setList(JSON.parse(t));
+  }).catch((e) => { setList((l) => l ?? []); if ((e as Error).message) toast((e as Error).message, "bad"); }), [toast]);
   useEffect(() => { load(); }, [load]);
 
   const shown = useMemo(() => (list ?? []).filter((it) => {

@@ -95,6 +95,8 @@ export function resolveStyle(input) {
   if (num(cap.inMs) != null) st.caption.inMs = clampN(num(cap.inMs), 30, 1500); // cuánto tarda en entrar cada palabra (medido)
 
   st.look = ["glass", "solid", "light"].includes(u.cards?.look) ? u.cards.look : "glass";
+  // Gráficos copiados de tus referencias (plantillas HTML+CSS ya limpiadas al analizarlas)
+  st.templates = (Array.isArray(u.templates) ? u.templates : []).filter((t) => t && /^[\w-]+$/.test(String(t.id)) && typeof t.html === "string" && typeof t.css === "string").slice(0, 12);
   if (st.look === "light") st.colors.keywordOnLight = ensureContrast(theme.gold, "#ffffff", 3);
 
   const lv = [1, 2, 3].includes(Number(u.motion?.intensity)) ? Number(u.motion.intensity) : 2;

@@ -2,7 +2,7 @@
 // Se ven sus vídeos, lo que ha sacado (letra, color, posición, zooms, look) y se usa con un clic.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Eye, Film, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { presetsApi, type PresetProgress, type PresetSub, type StylePreset, type StyleAsset } from "../style-api";
+import { presetsApi, type PresetGfx, type PresetProgress, type PresetSub, type StylePreset, type StyleAsset } from "../style-api";
 import { Modal, useToast } from "../ui";
 
 const STATUS: Record<StylePreset["status"], string> = { queued: "En cola", analyzing: "Analizando", ready: "Listo", error: "No salió" };
@@ -173,6 +173,9 @@ function PresetDetail({ p, onClose, onChanged, onUse, onApplied }: { p: StylePre
       {p.status === "ready" && p.analysis?.subtitles && p.analysis.subtitles.length > 0 && (
         <SubsPicker p={p} onApplied={onApplied} />
       )}
+      {p.status === "ready" && p.analysis?.graphics && p.analysis.graphics.length > 0 && (
+        <GfxPicker p={p} onApplied={onApplied} />
+      )}
       {p.status === "ready" && !p.analysis?.subtitles && (
         <div className="note" style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <span>Este estilo se analizó con la versión anterior. Vuelve a analizarlo para ver los <b>subtítulos encontrados</b> (recortes reales y su animación) y elegir cuál copiar.</span>
@@ -260,6 +263,70 @@ function SubsPicker({ p, onApplied }: { p: StylePreset; onApplied: () => void })
         ))}
       </div>
       {marks.length > 0 && <p className="muted" style={{ fontSize: 12.5, margin: "8px 0 0" }}>También vi (no se copia): {marks.map((m) => m.samples[0]?.text || m.label).join(" · ")}</p>}
+      {zoom && <div className="pr-zoom" onClick={() => setZoom(null)}><img src={zoom} alt="" /></div>}
+    </div>
+  );
+}
+
+/** Muestra una plantilla de gráfico tal cual la pinta el render (en un marco aislado, sin scripts). */
+export function GfxLive({ g, scale = 0.42 }: { g: PresetGfx; scale?: number }) {
+  const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const body = g.html.replace(/\{\{\s*([a-zA-Z_]\w*)\s*\}\}/g, (_, k) => k === "icon"
+    ? '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>'
+    : esc(g.fields.find((f) => f.key === k)?.example ?? k));
+  const W = g.width + 40, H = g.height + 40;
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>
+    :root{--f-title:"Inter",system-ui,sans-serif;--f-keyword:"Anton","Impact",sans-serif;--f-caption:"Inter",system-ui,sans-serif;--accent:#4F8CFF;--accent2:#22D3EE;--gold:#F2C84B}
+    html,body{margin:0;width:${W}px;height:${H}px;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%,#3a4250,#12151c 60%,#07080b);display:grid;place-items:center;color:#fff;font-family:var(--f-title)}
+    svg.ico{display:block}
+    .tpl{position:relative;width:${g.width}px;height:${g.height}px}
+    .tpl{${g.css}}
+  </style></head><body><div class="tpl">${body}</div></body></html>`;
+  return (
+    <div className="pr-gfx__live" style={{ width: W * scale, height: H * scale }}>
+      <iframe title={g.name} sandbox="" srcDoc={doc} style={{ width: W, height: H, transform: `scale(${scale})` }} />
+    </div>
+  );
+}
+
+/** Gráficos encontrados en tus vídeos y su recreación: eliges cuáles usará la edición. */
+function GfxPicker({ p, onApplied }: { p: StylePreset; onApplied: () => void }) {
+  const toast = useToast();
+  const list = p.analysis!.graphics!;
+  const initial = p.analysis?.choice?.graphics ?? list.map((g) => g.id);
+  const [sel, setSel] = useState<string[]>(initial);
+  const [busy, setBusy] = useState(false);
+  const [zoom, setZoom] = useState<string | null>(null);
+  const changed = sel.slice().sort().join() !== initial.slice().sort().join();
+  async function apply() {
+    setBusy(true);
+    try { await presetsApi.chooseGraphics(p.id, sel, true); toast(sel.length ? `${sel.length} gráfico(s) copiados: las próximas ediciones los usan` : "Sin gráficos copiados"); onApplied(); }
+    catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
+  return (
+    <div className="pr-subs">
+      <div className="pr-subs__head">
+        <div><b>Gráficos encontrados</b><small>A la izquierda, el original de tu vídeo; a la derecha, la recreación que usará la edición (con tus textos). Marca los que quieras.</small></div>
+        <button className="btn btn--primary" disabled={busy || (!changed && p.active)} onClick={apply}>{busy ? <Loader2 size={15} className="spin" /> : <Check size={15} />} {p.active && !changed ? "Aplicado" : "Usar estos gráficos"}</button>
+      </div>
+      <div className="pr-subs__grid">
+        {list.map((g) => (
+          <article key={g.id} className={"pr-sub" + (sel.includes(g.id) ? " is-sub" : "")}>
+            <div className="pr-gfx__pair">
+              <figure><img src={g.sample.url} alt="Original" onClick={() => setZoom(g.sample.url)} /><figcaption>Original</figcaption></figure>
+              <figure>{g.render ? <img src={g.render} alt="Recreación" onClick={() => setZoom(g.render!)} /> : <GfxLive g={g} />}<figcaption>Recreado</figcaption></figure>
+            </div>
+            <div className="pr-sub__body">
+              <div className="pr-sub__title"><span className="pill">{g.name}</span> <small>vídeo {g.video + 1} · entra: {g.anim.in}</small></div>
+              {g.use && <p>{g.use}</p>}
+              <small className="pr-sub__notes">Textos: {g.fields.map((f) => `${f.label} (máx. ${f.max})`).join(" · ") || "ninguno"}{g.hasIcon ? " · con icono" : ""}</small>
+              <div className="row pr-sub__pick">
+                <label><input type="checkbox" checked={sel.includes(g.id)} onChange={(e) => setSel((l) => (e.target.checked ? [...l, g.id] : l.filter((x) => x !== g.id)))} /> Usar en las ediciones</label>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
       {zoom && <div className="pr-zoom" onClick={() => setZoom(null)}><img src={zoom} alt="" /></div>}
     </div>
   );

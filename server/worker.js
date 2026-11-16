@@ -242,8 +242,10 @@ async function syncStyle() {
     if (!existsSync(f)) await download(`/api/worker/style/file/${encodeURIComponent(a.file)}`, f);
     db.prepare("INSERT OR REPLACE INTO style_assets (id, kind, name, file, family, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(a.id, a.kind, a.name, a.file, a.family, a.created_at);
   }
-  for (const a of db.prepare("SELECT * FROM style_assets").all()) {
-    if (!ids.has(a.id)) { db.prepare("DELETE FROM style_assets WHERE id = ?").run(a.id); rmSync(join(STYLE_DIR, a.file), { force: true }); }
+  // Solo se quitan las referencias, fuentes y logos que borraste en el panel (nunca los vídeos de los estilos guardados)
+  const there = new Set(s.assets.map((x) => x.id));
+  for (const a of db.prepare("SELECT * FROM style_assets WHERE kind != 'preset'").all()) {
+    if (!ids.has(a.id) && !there.has(a.id)) { db.prepare("DELETE FROM style_assets WHERE id = ?").run(a.id); rmSync(join(STYLE_DIR, a.file), { force: true }); }
   }
 }
 
@@ -252,7 +254,7 @@ const J = (v) => (v == null ? null : JSON.stringify(v));
 function mirrorJob(job, items) {
   db.prepare(`INSERT OR REPLACE INTO autoedit_jobs (id, media_id, kind, name, status, step, progress, error, options, plan, brain, summary, created_at, updated_at)
     VALUES (?, ?, ?, ?, 'queued', ?, ?, NULL, ?, ?, ?, ?, ?, ?)`)
-    .run(job.id, job.media_id, job.kind, job.name, job.step, job.progress || 0, J(job.options), J(job.plan), job.brain, job.summary, job.created_at, now());
+    .run(job.id, job.media_id, job.kind, job.name, job.step, job.progress || 0, J({ ...(job.options || {}), fromServer: true }), J(job.plan), job.brain, job.summary, job.created_at, now());
   for (const it of items) {
     const local = row(db.prepare("SELECT * FROM autoedit_items WHERE id = ?").get(it.id));
     // El vídeo ya hecho en este PC se conserva (el servidor manda en estado, notas y revisión)
@@ -418,7 +420,7 @@ async function doPreset({ preset, assets }) {
       fd.append("file", await openAsBlob(got.file), basename(got.file));
       return (await call("POST", `/api/worker/presets/${preset.id}/font`, fd)).id;
     }, (step) => state({ step }));
-    await state({ status: "ready", step: "Listo", name: r.name, style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, choice: r.choice, zooms: r.zooms, videos: r.videos } });
+    await state({ status: "ready", step: "Listo", name: r.name, style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, graphics: r.graphics, choice: r.choice, zooms: r.zooms, videos: r.videos } });
     log(`Estilo «${r.name}» listo`);
   } catch (e) {
     log("No se pudo analizar el estilo:", e.message);

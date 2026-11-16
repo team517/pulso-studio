@@ -31,6 +31,7 @@ export const DEFAULT_STYLE = {
   grade: "neutral",                                               // color de la imagen: neutral | warm | cool | punchy | soft | cinematic
   rules: [],                                                      // reglas concretas sacadas de un estilo guardado
   activePreset: null,                                             // estilo guardado en uso
+  templates: [],                                                  // gráficos copiados de tus referencias (HTML+CSS)
   notes: "",                                                      // instrucciones para la IA
   aiNotes: "",                                                    // lo que la IA vio en las referencias
   palette: [],                                                    // colores sacados de las referencias
@@ -68,6 +69,7 @@ export function toRenderStyle() {
     motion: s.motion,
     ...(s.look ? { look: s.look } : {}),
     graphics: s.graphics, // lo usa plan.js (none = sin gráficos); el render lo ignora
+    ...(Array.isArray(s.templates) && s.templates.length ? { templates: s.templates } : {}),
     logo: logoA ? { file: join(STYLE_DIR, logoA.file), position: s.logo.position || "top-right", size: Math.min(0.2, Math.max(0.06, Number(s.logo.size) || 0.1)) } : null,
   };
 }
@@ -80,6 +82,10 @@ export function styleNotesForAI() {
   if (s.graphics === "few") parts.push("Pocos gráficos: como mucho 2-3 en todo el vídeo, solo donde aporten un dato que NO dice el subtítulo.");
   if (s.graphics === "many") parts.push("Muchos gráficos: casi cada idea con su gráfico, ritmo alto.");
   if (s.caption.uppercase) parts.push("Los textos de pantalla van en MAYÚSCULAS.");
+  if (Array.isArray(s.templates) && s.templates.length && s.graphics !== "none") {
+    parts.push(`GRÁFICOS COPIADOS DE TUS REFERENCIAS (úsalos EN VEZ de card/checklist/stat cuando encajen; mismo diseño que el original): `
+      + s.templates.map((t) => `{"type":"custom","tpl":"${t.id}","from":i,"to":j,${t.hasIcon ? `"icon":"${t.icon || "star"}",` : ""}"fields":{${t.fields.map((f) => `"${f.key}":"máx. ${f.max} letras, p. ej. ${f.example}"`).join(",")}}} → ${t.name}${t.use ? ` (${t.use})` : ""}`).join(" · "));
+  }
   if (s.caption.maxWords) parts.push(`Subtítulos de ${s.caption.maxWords} palabra(s) como máximo por chunk.`);
   if (s.motion?.zoomStyle === "punch") parts.push("Zooms de golpe al empezar algunas frases (como cortes de cámara), no zooms lentos.");
   if (s.motion?.zoomStyle === "none") parts.push("Sin zooms.");

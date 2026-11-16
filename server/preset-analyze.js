@@ -8,6 +8,8 @@ import { join, extname, basename } from "node:path";
 import { askClaude, canSeeImages, NeedLogin } from "./autoedit/brain.js";
 import { measureZooms } from "./motion-measure.js";
 import { fontPxFrom, defaultChoice, withChoice } from "./preset-style.js";
+import { normalizeTemplate, snapTemplates } from "./gfx-template.js";
+import { ICONS as ICON_SET } from "./autoedit/render/icons.js";
 
 const VID_EXT = [".mp4", ".mov", ".m4v", ".webm"];
 
@@ -228,7 +230,10 @@ Por estilo mide con precisión:
 Responde SOLO con JSON:
 {"texts":[{"frame":1,"text":"y de","box":[0.36,0.47,0.06,0.04],"style":"A"}],
  "styles":[{"id":"A","role":"subtitle","label":"descripción corta en español","font":{"seen":"","family":"","weight":600,"italic":false,"alternatives":["",""]},"color":"#FFFFFF","uppercase":false,"stroke":null,"shadow":"soft","bg":null,"letterSpacing":0,"capHeightPct":0.03,"yPct":0.5,"xPct":0.5,"align":"center","maxWords":2,"lines":1,"keywordColor":null}]}
-Si no hay ningún texto: {"texts":[],"styles":[]}`;
+
+Además, apunta los GRÁFICOS diseñados que veas (no el vídeo en sí): tarjetas, píldoras/etiquetas con fondo o neón, iconos en baldosa, insignias, contadores, listas con checks, rótulos con caja, flechas… En "graphics" pon cada uno UNA vez (el fotograma donde mejor se vea entero): {"frame":3,"box":[x,y,w,h],"kind":"card|pill|icon|badge|counter|list|label|other","description":"qué es y cómo es"}. Los subtítulos sueltos sin caja NO son gráficos.
+Respuesta completa: {"texts":[...],"styles":[...],"graphics":[...]}
+Si no hay ningún texto ni gráfico: {"texts":[],"styles":[],"graphics":[]}`;
 
 const ANIM_PROMPT = (strips) => `Estas imágenes son tiras de fotogramas SEGUIDOS (10 por segundo, de izquierda a derecha y de arriba abajo, con el segundo encima) recortadas alrededor de un texto de un reel. En cada tira se ve cómo ENTRA ese texto.
 
@@ -241,6 +246,82 @@ Léelas con la herramienta Read y, para cada estilo, di cómo aparece:
 - notes: una frase con lo que ves (escala inicial, desde dónde desliza, si hay desenfoque, si cambia de color).
 
 Responde SOLO con JSON: {"styles":[{"id":"A","type":"pop","inMs":250,"wordByWord":true,"notes":"..."}]}`;
+
+
+const GFX_PROMPT = (crops, icons) => `Eres diseñador de motion graphics. Estos recortes son GRÁFICOS de reels de referencia. Recrea cada uno como una pieza HTML + CSS que se vea IGUAL (calcado): misma forma, proporciones, colores y degradados, bordes, radios, brillos/neón (box-shadow, text-shadow), transparencias/cristal (backdrop-filter), tipografía (grosor, tamaño, espaciado, mayúsculas), espacios internos e iconos.
+
+Recortes (léelos con la herramienta Read):
+${crops.map((c, i) => `${i + 1}. ${c.f} — ${c.kind}: ${c.description} (en el vídeo mide ${c.wPx}×${c.hPx} px a 1080 de ancho)`).join("\n")}
+
+Reglas de la pieza:
+- Todo dentro de UN elemento raíz con class="root". El CSS solo con selectores que empiecen por .root (p. ej. ".root{...} .root .pill{...}").
+- Medidas en px para un vídeo vertical de 1080 de ancho (usa el tamaño que te doy).
+- Textos que cambian según el vídeo: {{title}}, {{subtitle}}, {{label}}, {{value}}… (los nombres que quieras). El icono: {{icon}} (se pondrá un SVG de línea; dale tamaño y color con ".root svg{width:..;height:..;color:..;stroke:currentColor}"). Iconos posibles: ${icons}.
+- Fuentes: font-family: var(--f-title) (textos), var(--f-keyword) (cifras/palabras de impacto). Colores libres (HEX) o var(--accent).
+- Sin JavaScript, sin <img>, sin <style>, sin url() externas, sin position:fixed. Animaciones CSS no (las pone el render).
+- Si el texto puede ser más largo que el ejemplo, que no se salga: white-space:nowrap y tamaños razonables; indica "max" de caracteres por campo.
+
+Responde SOLO con JSON:
+{"templates":[{"ref":1,"name":"Icono con etiqueta","kind":"icon","use":"cuándo usarlo (p. ej. nombrar una herramienta o un paso)",
+  "fields":[{"key":"title","label":"Título","example":"Tu sistema","max":16}],"icon":"rocket",
+  "html":"<div class=\\"root\\">...</div>","css":".root{...}","width":420,"height":300,"xPct":0.5,"yPct":0.4,
+  "anim":{"in":"pop|fade|slide-up|slide-left|slide-right|scale|glow|typewriter","ms":400}}]}`;
+
+const FIX_PROMPT = (pairs) => `Compara cada gráfico ORIGINAL con tu RECREACIÓN (foto del render) y corrige el HTML/CSS para que quede calcado: tamaños relativos, colores, brillos, bordes, radios, grosor y tamaño de letra, espacios, posición del icono.
+
+${pairs.map((p, i) => `${i + 1}. original: ${p.orig} · recreación: ${p.render}\n   plantilla actual: ${JSON.stringify({ html: p.t.html, css: p.t.css, width: p.t.width, height: p.t.height })}`).join("\n")}
+
+Léelas todas con Read. Devuelve SOLO JSON con las plantillas corregidas (mismas reglas: raíz class="root", CSS con .root, {{campos}} y {{icon}}):
+{"templates":[{"ref":1,"html":"...","css":"...","width":420,"height":300}]}`;
+
+/** Gráficos de un vídeo: recortes, Claude los recrea, foto de la recreación, una vuelta de corrección. */
+async function recreateGraphics(found, file, info, k, dir, { saveFile, step }) {
+  const crops = [];
+  for (const [n, g] of found.slice(0, 5).entries()) {
+    const c = padBox(g.box, info.width, info.height, 0.12, 0.12);
+    const f = join(dir, `v${k}-g${n + 1}.png`);
+    await ff(["-v", "error", "-y", "-ss", g.t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", `crop=${c.w}:${c.h}:${c.x}:${c.y}`, f]);
+    if (!existsSync(f)) continue;
+    const s1080 = 1080 / Math.min(info.width, info.height);
+    crops.push({ f, kind: g.kind || "card", description: String(g.description || "").slice(0, 200), wPx: Math.round(g.box[2] * info.width * s1080), hPx: Math.round(g.box[3] * info.height * s1080), t: g.t, box: g.box });
+  }
+  if (!crops.length) return [];
+  step("Claude recrea los gráficos (HTML + CSS)");
+  const r = await askClaude(GFX_PROMPT(crops, ICON_SET), { images: crops.map((c) => c.f), dir, timeoutMs: 10 * 60e3, maxTurns: crops.length + 6 });
+  let tpls = (Array.isArray(r.templates) ? r.templates : []).map((t) => ({ t: normalizeTemplate(t, `v${k}g${Number(t.ref) || 0}`), ref: Number(t.ref) })).filter((x) => x.t && crops[x.ref - 1]);
+  // Foto de cada recreación y una vuelta de corrección comparando con el original
+  step("Comparando la recreación con el original");
+  const snap = async (tag) => {
+    const items = tpls.map((x) => ({ t: x.t, out: join(dir, `v${k}-g${x.ref}-${tag}.png`) }));
+    try { await snapTemplates(items); } catch (e) { console.warn("[estilos] foto de gráficos:", e.message); }
+    return items.filter((i) => existsSync(i.out));
+  };
+  const first = await snap("r1");
+  if (first.length) {
+    try {
+      const fix = await askClaude(FIX_PROMPT(tpls.filter((x) => first.some((i) => i.t === x.t)).map((x) => ({ orig: crops[x.ref - 1].f, render: join(dir, `v${k}-g${x.ref}-r1.png`), t: x.t }))),
+        { images: [...first.map((i) => i.out), ...tpls.map((x) => crops[x.ref - 1].f)], dir, timeoutMs: 10 * 60e3, maxTurns: first.length * 2 + 6 });
+      for (const f of Array.isArray(fix.templates) ? fix.templates : []) {
+        const x = tpls.find((y) => y.ref === Number(f.ref));
+        if (!x) continue;
+        const better = normalizeTemplate({ ...x.t, ...f, fields: x.t.fields, anim: x.t.anim, name: x.t.name, kind: x.t.kind, use: x.t.use, icon: x.t.icon, xPct: x.t.xPct, yPct: x.t.yPct }, x.t.id);
+        if (better) x.t = better;
+      }
+    } catch (e) { console.warn("[estilos] corrección de gráficos:", e.message); }
+  }
+  const final = await snap("r2");
+  const out = [];
+  for (const x of tpls) {
+    const c = crops[x.ref - 1];
+    const shot = final.find((i) => i.t === x.t);
+    out.push({
+      ...x.t, video: k,
+      sample: { url: await saveFile(c.f, `v${k}-g${x.ref}.png`), t: +c.t.toFixed(2) },
+      render: shot ? await saveFile(shot.out, `v${k}-g${x.ref}-recreado.png`) : null,
+    });
+  }
+  return out;
+}
 
 /**
  * Analiza un vídeo: zooms medidos, subtítulos encontrados (recortes reales) y cómo entran (tiras de animación).
@@ -328,8 +409,18 @@ async function analyzeOneVideo(file, k, dir, { onStep, saveFile }) {
     } catch (e) { console.warn("[estilos] animación:", e.message); }
   }
   for (const s of subs) delete s.firstBox;
+
+  // Gráficos: recortes, recreación en HTML+CSS y comparación con el original
+  let graphics = [];
+  const found = (Array.isArray(r.graphics) ? r.graphics : []).map((g) => ({ ...g, box: box4(g.box), frame: Number(g.frame) })).filter((g) => g.box && frames[g.frame - 1] && g.box[2] > 0.03 && g.box[3] > 0.02)
+    .map((g) => ({ ...g, t: frames[g.frame - 1].t }));
+  if (found.length) {
+    step(86, `Recortando ${found.length} gráfico(s)`);
+    try { graphics = await recreateGraphics(found, file, info, k, dir, { saveFile, step: (s) => step(92, s) }); }
+    catch (e) { if (e instanceof NeedLogin) throw e; console.warn("[estilos] gráficos:", e.message); }
+  }
   step(100, "Listo");
-  return { file, info, cuts: cuts.length, zooms, subs };
+  return { file, info, cuts: cuts.length, zooms, subs, graphics };
 }
 
 /**
@@ -394,6 +485,7 @@ export async function analyzePresetFiles(files, workDir, opts = {}) {
     style.motion = { ...style.motion, zoomStyle, zoomMax: zoomStyle === "none" ? 1 : +Math.min(1.25, Math.max(1.03, maxes[Math.floor(maxes.length / 2)] || 1.1)).toFixed(3) };
   }
   style = withChoice(style, subtitles, choice);
+  style.templates = results.flatMap((x) => x.graphics || []).map(({ sample, render, video, ...t }) => t);
   const fontsWanted = {
     caption: r.fonts?.caption?.family ? { families: [r.fonts.caption.family, ...(r.fonts.caption.alternatives || [])], weight: style.caption.weight, seen: r.fonts.caption.seen || "" } : null,
     keyword: r.fonts?.keyword?.family ? { families: [r.fonts.keyword.family, ...(r.fonts.keyword.alternatives || [])], weight: clamp(r.fonts.keyword.weight, 100, 900, 800), seen: r.fonts.keyword.seen || "" } : null,
@@ -401,7 +493,8 @@ export async function analyzePresetFiles(files, workDir, opts = {}) {
   prog.final = 100; prog.step = "Descargando tipografías"; report();
   return {
     name: String(r.name || "Mi estilo").slice(0, 40), summary: String(r.summary || "").slice(0, 1400), style, fontsWanted, raw: r,
-    subtitles, choice, zooms: results.map((x, k) => ({ video: k, name: prog.videos[k].name, ...(x.zooms ? { zoomStyle: x.zooms.zoomStyle, zoomMax: x.zooms.zoomMax, perMin: x.zooms.perMin, list: x.zooms.zooms.slice(0, 20) } : {}) })),
+    graphics: results.flatMap((x) => x.graphics || []),
+    subtitles, choice: { ...choice, graphics: results.flatMap((x) => x.graphics || []).map((g) => g.id) }, zooms: results.map((x, k) => ({ video: k, name: prog.videos[k].name, ...(x.zooms ? { zoomStyle: x.zooms.zoomStyle, zoomMax: x.zooms.zoomMax, perMin: x.zooms.perMin, list: x.zooms.zooms.slice(0, 20) } : {}) })),
     videos: prog.videos, frames: readdirSync(workDir).length,
   };
 }

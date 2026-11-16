@@ -24,7 +24,8 @@ export type AutoJob = {
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { if (res.ok) throw new Error("Respuesta rara del servidor: vuelve a intentarlo"); }
   if (!res.ok) throw new Error(data?.error || `Error ${res.status}`);
   return data as T;
 }

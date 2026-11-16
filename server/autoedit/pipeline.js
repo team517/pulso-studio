@@ -35,9 +35,11 @@ db.exec(`
   );
 `);
 // Si el programa se cerró a mitad de un trabajo, se retoma (las pasadas ya hechas no se repiten)
+// (los trabajos del panel que edita el editor del PC no se tocan: comparten carpeta con la app local)
+const MINE = "COALESCE(options, '') NOT LIKE '%\"fromServer\":true%'";
 if (MODE === "local") {
-  db.prepare("UPDATE autoedit_jobs SET status = 'queued' WHERE status = 'running'").run();
-  db.prepare("UPDATE autoedit_items SET status = 'queued' WHERE status NOT IN ('done','error','queued')").run();
+  db.prepare(`UPDATE autoedit_jobs SET status = 'queued' WHERE status = 'running' AND ${MINE}`).run();
+  db.prepare(`UPDATE autoedit_items SET status = 'queued' WHERE status NOT IN ('done','error','queued') AND job_id IN (SELECT id FROM autoedit_jobs WHERE ${MINE})`).run();
 }
 
 const setJob = (id, f) => {
@@ -77,10 +79,10 @@ export function kick() {
   // En el servidor no se edita (lo recoge el PC); en el PC, el que manda es worker.js
   if (MODE !== "local") return;
   if (busy) return;
-  const next = db.prepare("SELECT id FROM autoedit_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1").get();
+  const next = db.prepare(`SELECT id FROM autoedit_jobs WHERE status = 'queued' AND ${MINE} ORDER BY created_at LIMIT 1`).get();
   if (!next) {
     // ¿Alguna versión pendiente de rehacer en un trabajo terminado?
-    const redo = db.prepare("SELECT job_id FROM autoedit_items WHERE status = 'queued' LIMIT 1").get();
+    const redo = db.prepare(`SELECT job_id FROM autoedit_items WHERE status = 'queued' AND job_id IN (SELECT id FROM autoedit_jobs WHERE ${MINE}) LIMIT 1`).get();
     if (!redo) return;
     setJob(redo.job_id, { status: "queued" });
     return kick();

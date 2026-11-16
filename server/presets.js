@@ -72,6 +72,7 @@ export function applyPreset(id) {
     rhythm: ps.rhythm || null,
     aiNotes: analysis.summary || "",
     rules: ps.rules || [],
+    templates: Array.isArray(ps.templates) ? ps.templates : [],
     aiSuggested: null,
     activePreset: p.id,
   });
@@ -118,10 +119,15 @@ export function registerPresetRoutes(app, wrap) {
     if (!p) throw Object.assign(new Error("No encuentro ese estilo."), { status: 404 });
     const a = parse(p.analysis, {}), st = parse(p.style, null);
     const subs = Array.isArray(a.subtitles) ? a.subtitles : [];
-    if (!st || !subs.length) throw Object.assign(new Error("Este estilo no tiene subtítulos encontrados. Vuelve a analizarlo."), { status: 409 });
-    const choice = { subtitle: String(req.body?.subtitle || ""), keyword: req.body?.keyword ? String(req.body.keyword) : null };
-    if (!subs.some((s) => s.id === choice.subtitle)) throw Object.assign(new Error("Ese subtítulo no existe."), { status: 400 });
-    setPreset(p.id, { style: withChoice(st, subs, choice), analysis: { ...a, choice } });
+    if (!st || (!subs.length && !(a.graphics || []).length)) throw Object.assign(new Error("Este estilo no tiene subtítulos ni gráficos encontrados. Vuelve a analizarlo."), { status: 409 });
+    const prev = a.choice || {};
+    const choice = {
+      subtitle: req.body?.subtitle !== undefined ? String(req.body.subtitle || "") : prev.subtitle,
+      keyword: req.body?.keyword !== undefined ? (req.body.keyword ? String(req.body.keyword) : null) : prev.keyword ?? null,
+      graphics: Array.isArray(req.body?.graphics) ? req.body.graphics.map(String) : prev.graphics ?? (a.graphics || []).map((g) => g.id),
+    };
+    if (choice.subtitle && !subs.some((s) => s.id === choice.subtitle)) throw Object.assign(new Error("Ese subtítulo no existe."), { status: 400 });
+    setPreset(p.id, { style: withChoice(st, subs, choice, a.graphics || []), analysis: { ...a, choice } });
     if (req.body?.use || getSetting("style:default", {}).activePreset === p.id) applyPreset(p.id);
     res.json(presetOut(getPreset(p.id)));
   }));
@@ -243,7 +249,7 @@ async function runLocal(id) {
       db.prepare("INSERT INTO style_assets (id, kind, name, file, family, created_at) VALUES (?, 'font', ?, ?, ?, ?)").run(fid, `${got.family} ${got.weight}${ext}`, fid + ext, got.family, now());
       return fid;
     }, (step) => setPreset(id, { step }));
-    setPreset(id, { status: "ready", step: "Listo", style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, choice: r.choice, zooms: r.zooms, videos: r.videos }, ...(p.name === "Estilo nuevo" ? { name: r.name } : {}) });
+    setPreset(id, { status: "ready", step: "Listo", style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, graphics: r.graphics, choice: r.choice, zooms: r.zooms, videos: r.videos }, ...(p.name === "Estilo nuevo" ? { name: r.name } : {}) });
     if (getSetting("style:default", {}).activePreset === id) applyPreset(id);
   } catch (e) {
     console.error("[estilos]", e);

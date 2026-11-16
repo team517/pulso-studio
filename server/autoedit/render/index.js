@@ -134,7 +134,7 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
     const t = Date.now();
     report(0.02, "Preparando el texto detrás de la cabeza");
     const bdir = path.join(work, "hf-behind");
-    fs.rmSync(bdir, { recursive: true, force: true });
+    try { fs.rmSync(bdir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 }); } catch (e) { console.warn("[render] no se pudo limpiar", bdir, e.code); }
     const { t0, t1 } = styled((inp) => buildBehindProject(inp, plan.behind, bdir));
     const mov = path.join(work, "behind.mov");
     // pocos fotogramas: menos Chromes arrancan antes (cada uno cuesta ~2-3 s)
@@ -159,7 +159,7 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
   const t2 = Date.now();
   report(p0, "Generando gráficos y subtítulos");
   const fdir = path.join(work, "hf");
-  fs.rmSync(fdir, { recursive: true, force: true });
+  try { fs.rmSync(fdir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 }); } catch (e) { console.warn("[render] no se pudo limpiar", fdir, e.code); }
   const { sfx } = styled((inp, g) => buildFinalProject(inp, g, plan, baseVideo, fdir, twoStage));
   const raw = path.join(work, "render-raw.mp4");
   await runHf(["render", ".", "-o", raw, "--fps", "30", "--quality", "standard", "--crf", "18", "--workers", nW], fdir,

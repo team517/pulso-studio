@@ -41,7 +41,19 @@ const withBase = (u: string) => (BASE && /^\/(api|files)\//.test(u) ? BASE + u :
 export function installFetch() {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const target = typeof input === "string" ? withBase(input) : input;
-    const res = await nativeFetch(target as RequestInfo, init);
+    // Si el servidor se está reiniciando (al implementar), las lecturas esperan y se reintentan solas
+    const isApiGet = typeof input === "string" && input.startsWith("/api/") && (!init?.method || init.method === "GET");
+    let res: Response | null = null;
+    for (let i = 0; ; i++) {
+      try {
+        res = await nativeFetch(target as RequestInfo, init);
+        if (!isApiGet || res.status < 502 || i >= 5) break;
+      } catch (e) {
+        if (!isApiGet || i >= 5) throw e;
+      }
+      await new Promise((ok) => setTimeout(ok, 1500 + i * 1000));
+    }
+    if (!res) throw new Error("Sin conexión con el servidor");
     if (IN_PANEL && res.status === 401 && typeof input === "string" && input.startsWith("/api/")) {
       const st = await authState().catch(() => null);
       if (st && !st.loggedIn) window.location.reload();

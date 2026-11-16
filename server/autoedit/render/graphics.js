@@ -4,6 +4,7 @@
 import { icon } from "./icons.js";
 import { esc, fitLine, fitWrap, textEm, fmtNum, r2, r3, rgba, clamp, shadeHex, ensureContrast } from "./text.js";
 import { S, IN, IN_SOFT, vb, dist } from "./style.js";
+import { fillTemplate, scopedCss } from "../../gfx-template.js";
 
 export const SPRING = `const rb = (vel, fuerza, rebotes, frenado, t) => vel * fuerza * Math.sin(rebotes * t * 2 * Math.PI) / Math.exp(frenado * t);
         const VB = (fuerza = 0.12, llegada = 0.3) => (p) => { const tot = llegada + 0.8, t = p * tot; if (t < llegada) { const u = t / llegada; return u * u; } return 1 + rb(2 / llegada, fuerza, 2.5, 5, t - llegada); };`;
@@ -375,6 +376,30 @@ B.icons = (g, c) => {
   });
   const colW = items.map((it) => Math.max(132, it.label ? textEm(it.label, FT()) * lsz : 0));
   return { html, w: Math.min(860, colW.reduce((a, b) => a + b, 0) + (items.length - 1) * 30), h: 132 + (items.some((i) => i.label) ? 12 + lsz * 1.3 : 0), noFadeIn: true };
+};
+
+// Gráfico copiado de una referencia: su HTML+CSS con los textos de este vídeo
+const tplCssDone = new WeakMap();
+B.custom = (g, c) => {
+  const st = S(), t = (st.templates || []).find((x) => x.id === g.tpl);
+  if (!t) return B.card({ ...g, title: g.fields?.title || g.title || "", subtitle: g.fields?.subtitle || g.subtitle || "" }, c);
+  const done = tplCssDone.get(st) || new Set();
+  tplCssDone.set(st, done);
+  if (!done.has(t.id)) {
+    done.add(t.id);
+    c.css(`#gfx-root { --f-title: ${st.fonts.title.css}; --f-keyword: ${st.fonts.keyword.css}; --f-caption: ${st.fonts.caption.css}; --accent: ${c.theme.accent}; --accent2: ${c.theme.accent2}; --gold: ${c.theme.gold}; }`);
+    c.css(scopedCss(t).replace(/\n/g, " "));
+  }
+  const html = `<div class="gp e0 tpl tpl-${t.id}">${fillTemplate(t, g.fields || {}, g.icon)}</div>`;
+  const a = t.anim || {}, d = r3(Math.min(1.2, Math.max(0.15, (a.ms || 450) / 1000)));
+  const sel = `#${c.id} .tpl`;
+  if (a.in === "pop") POP(sel, c.s + 0.02, "scale: .6", "scale: 1").forEach(c.js);
+  else if (a.in === "slide-up") c.js(`gtl.fromTo("${sel}", { y: 60 }, { y: 0, duration: ${d}, ease: "power3.out" }, ${r3(c.s)});`);
+  else if (a.in === "slide-left") c.js(`gtl.fromTo("${sel}", { x: 90 }, { x: 0, duration: ${d}, ease: "power3.out" }, ${r3(c.s)});`);
+  else if (a.in === "slide-right") c.js(`gtl.fromTo("${sel}", { x: -90 }, { x: 0, duration: ${d}, ease: "power3.out" }, ${r3(c.s)});`);
+  else if (a.in === "scale") c.js(`gtl.fromTo("${sel}", { scale: 1.25 }, { scale: 1, duration: ${d}, ease: "power3.out" }, ${r3(c.s)});`);
+  else if (a.in === "glow") c.js(`gtl.fromTo("${sel}", { filter: "brightness(2.2) blur(6px)" }, { filter: "brightness(1) blur(0px)", duration: ${d}, ease: "power2.out" }, ${r3(c.s)});`);
+  return { html, w: t.width, h: t.height };
 };
 
 export const SLOT_BUILDERS = B;
