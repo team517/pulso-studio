@@ -54,7 +54,8 @@ export function installFetch() {
     const url = typeof input === "string" ? withBase(input) : input instanceof URL ? input : input;
     const res = await nativeFetch(url as RequestInfo, init);
     if (IN_PANEL && res.status === 401 && typeof input === "string" && input.startsWith("/api/") && input !== "/api/session") {
-      try { await startSession(); } catch { return res; }
+      // Si la sesión caducó, se vuelve a la pantalla de entrada
+      try { await startSession(); } catch { window.location.reload(); return res; }
       return nativeFetch(url as RequestInfo, init);
     }
     return res;
@@ -63,3 +64,18 @@ export function installFetch() {
 
 /** Enlaces que no pasan por fetch (descargas, OAuth). */
 export const url = withBase;
+
+/** Entrar con el correo y la contraseña de una cuenta de administrador de ChipsFinder. */
+export async function login(email: string, password: string): Promise<void> {
+  const r = await nativeFetch(`${BASE}/api/login`, {
+    method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ email, password }),
+  });
+  if (r.ok) return;
+  const data = await r.json().catch(() => null);
+  throw new NoAccess(data?.error || `Error ${r.status}`, r.status === 403 ? "forbidden" : "login");
+}
+
+export async function logout(): Promise<void> {
+  await nativeFetch(`${BASE}/api/logout`, { method: "POST", credentials: "same-origin" }).catch(() => null);
+  window.location.reload();
+}

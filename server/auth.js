@@ -1,6 +1,6 @@
-// Acceso en modo servidor: solo los administradores del panel de ChipsFinder.
-// La web de Pulso Studio va dentro del panel (mismo dominio) y le pasa al servidor el token de la sesión del panel;
-// el servidor lo comprueba con Supabase y, si es admin, le da una cookie propia para 12 horas.
+// Acceso en modo servidor: solo los administradores de ChipsFinder (mismas cuentas de Supabase).
+// Se entra con correo y contraseña (/api/login) o, si va dentro del panel, con el token de su sesión (/api/session).
+// El servidor lo comprueba con Supabase y, si es admin, da una cookie propia para 12 horas.
 import { IS_SERVER, BASE, SUPABASE_URL, SUPABASE_KEY, WORKER_TOKEN, sign, safeEqual, checkSignedPath } from "./config.js";
 
 const COOKIE = "ps_s";
@@ -33,10 +33,44 @@ function setSession(res, user) {
 export const isWorker = (req) => !!WORKER_TOKEN && safeEqual(req.headers["x-worker-token"] || "", WORKER_TOKEN);
 
 /** Rutas que no piden sesión: la propia entrada, el PC que edita (lleva su token) y la vuelta de las redes. */
-const OPEN = [/^\/api\/session$/, /^\/api\/worker\//, /^\/api\/auth\/[a-z]+\/callback$/];
+const OPEN = [/^\/api\/(session|login|logout)$/,/^\/api\/worker\//, /^\/api\/auth\/[a-z]+\/callback$/];
 
 export function registerAuth(app) {
   if (!IS_SERVER) return;
+
+  // Entrar con el correo y la contraseña de tu cuenta de ChipsFinder (solo administradores)
+  const tries = new Map();
+  app.post("/api/login", async (req, res) => {
+    const ip = String(req.ip || "");
+    const t = tries.get(ip) || { n: 0, at: Date.now() };
+    if (Date.now() - t.at > 15 * 60e3) { t.n = 0; t.at = Date.now(); }
+    if (t.n >= 10) return res.status(429).json({ error: "Demasiados intentos. Espera unos minutos." });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    if (!email || !password) return res.status(400).json({ error: "Escribe tu correo y tu contraseña." });
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: "POST", headers: { apikey: SUPABASE_KEY, "content-type": "application/json" }, body: JSON.stringify({ email, password }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok || !data?.user) {
+        t.n++; tries.set(ip, t);
+        return res.status(401).json({ error: "Correo o contraseña incorrectos." });
+      }
+      const role = String(data.user.app_metadata?.role || "").toUpperCase();
+      if (role !== "ADMIN") return res.status(403).json({ error: "Pulso Studio es solo para administradores." });
+      tries.delete(ip);
+      setSession(res, data.user);
+      res.json({ ok: true, email: data.user.email });
+    } catch (e) {
+      res.status(502).json({ error: "No se pudo comprobar la cuenta: " + e.message });
+    }
+  });
+
+  app.post("/api/logout", (req, res) => {
+    res.setHeader("Set-Cookie", `${COOKIE}=; Path=${BASE || "/"}; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+    res.json({ ok: true });
+  });
 
   app.post("/api/session", async (req, res) => {
     const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");

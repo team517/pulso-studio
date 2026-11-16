@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, LayoutGrid, Link2, Paintbrush, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
-import { IN_PANEL } from "./base";
+import { IN_PANEL, logout } from "./base";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
 import Videos from "./pages/Videos";
@@ -84,6 +84,7 @@ export default function App() {
         <div className="side__foot">
           {IN_PANEL ? (
             <>
+              <button className="btn btn--ghost btn--sm side__out" onClick={logout}>Salir</button>
               <span className={"dot" + (pc?.online ? "" : " is-off")} />
               {!online ? "Sin conexión con el servidor" : pc?.online ? (pc.busy ? `Tu PC: ${pc.busy}` : "Tu PC está listo para editar") : "Tu PC está apagado: los vídeos esperan en cola"}
             </>
