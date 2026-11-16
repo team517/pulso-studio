@@ -112,7 +112,63 @@ async function prepareSource(job, work) {
     // Whisper a veces se cae al arrancar en la tarjeta gráfica (fallo de memoria de Windows): un reintento lo arregla
     await whisper().catch(async (e) => { console.warn("[autoedit] Whisper falló, reintento:", String(e.message).slice(-200)); await new Promise((r) => setTimeout(r, 4000)); return whisper(); });
   }
+  await maskBurnedText(job, work);
   return readJson(join(work, "info.json"));
+}
+
+/**
+ * ¿El vídeo ya trae textos quemados (subtítulos de otra edición, rótulos)? Claude mira 6 fotogramas; si los hay,
+ * esa franja se difumina para que no choque con los subtítulos nuevos, y se avisa.
+ */
+export async function maskBurnedText(job, work) {
+  const flag = join(work, "burned.json");
+  if (existsSync(flag)) return readJson(flag);
+  const v = join(work, "vertical.mp4");
+  if (!existsSync(v) || !(await canSeeImages().catch(() => false))) return null;
+  setJob(job.id, { step: "Comprobando si el vídeo ya trae textos", progress: 0.06 });
+  const dir = join(work, "burned");
+  mkdirSync(dir, { recursive: true });
+  const info = readJson(join(work, "info.json"));
+  const D = Number(info.duration) || 30;
+  const frames = [];
+  for (let i = 0; i < 6; i++) {
+    const t = D * (0.08 + 0.14 * i), f = join(dir, `f${i + 1}.jpg`);
+    await run("ffmpeg", ["-v", "error", "-y", "-ss", t.toFixed(2), "-i", v, "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", f]).catch(() => {});
+    if (existsSync(f)) frames.push(f);
+  }
+  let res = { boxes: [], note: null };
+  try {
+    const r = await askClaude(`Mira estos ${frames.length} fotogramas de la toma que hay que editar (léelos con Read): ${frames.join(", ")}
+¿Lleva ya TEXTOS QUEMADOS en la imagen de una edición anterior (subtítulos, titulares, rótulos, marcas de agua, botones o interfaz de Instagram/TikTok)? No cuentes textos reales del escenario (carteles, camisetas, pantallas).
+Si los hay, da las ZONAS donde aparecen (unión de todas las posiciones de cada tipo), en fracciones del fotograma [x, y, ancho, alto], con un poco de margen.
+Responde SOLO JSON: {"burned": true|false, "kind": "subtítulos|titular|interfaz|marca de agua", "zones": [[x,y,w,h]], "note": "una frase"}`, { images: frames, dir, timeoutMs: 4 * 60e3, maxTurns: frames.length + 4 });
+    const zones = (Array.isArray(r.zones) ? r.zones : []).filter((z) => Array.isArray(z) && z.length === 4 && z.every((n) => Number.isFinite(Number(n))))
+      .map((z) => z.map(Number)).filter(([, , w, h]) => w > 0.03 && h > 0.015 && w * h < 0.45).slice(0, 4);
+    if (r.burned && zones.length) res = { boxes: zones, note: `Tu vídeo ya traía ${r.kind || "textos"} de otra edición: los he difuminado para que no choquen con los nuevos. Para el mejor resultado, sube la toma original sin editar.` };
+  } catch (e) { if (e instanceof NeedLogin) throw e; console.warn("[autoedit] comprobar textos quemados:", e.message); }
+  if (res.boxes.length) {
+    setJob(job.id, { step: "Difuminando los textos que ya traía el vídeo", progress: 0.07 });
+    const W = 1080, H = 1920, even = (n) => Math.max(2, Math.round(n / 2) * 2);
+    const parts = [], chain = [];
+    res.boxes.forEach(([x, y, w, h], i) => {
+      const bx = even(Math.max(0, x) * W), by = even(Math.max(0, y) * H), bw = even(Math.min(1 - Math.max(0, x), w) * W), bh = even(Math.min(1 - Math.max(0, y), h) * H);
+      parts.push(`[0:v]crop=${bw}:${bh}:${bx}:${by},boxblur=40:4[b${i}]`);
+      chain.push({ i, bx, by });
+    });
+    let last = "0:v";
+    const ov = chain.map(({ i, bx, by }, k) => { const o = `[${last}][b${i}]overlay=${bx}:${by}${k === chain.length - 1 ? "[out]" : `[o${k}]`}`; last = `o${k}`; return o; });
+    const orig = join(work, "vertical-original.mp4");
+    if (!existsSync(orig)) copyFileSync(v, orig);
+    try {
+      await run("ffmpeg", ["-v", "error", "-y", "-i", orig, "-filter_complex", [...parts, ...ov].join(";"), "-map", "[out]", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", v]);
+    } catch (e) {
+      console.warn("[autoedit] no se pudo difuminar:", String(e.message).slice(-300));
+      copyFileSync(orig, v);
+      res = { boxes: [], note: res.note?.replace(/: los he difuminado[^.]*\./, ".") || null };
+    }
+  }
+  writeFileSync(flag, JSON.stringify(res));
+  return res;
 }
 
 /** Corta pausas y tomas falsas dentro de los tramos [t0, t1] (todo el vídeo si no se dan) → cut.mp4 + words.json */
@@ -139,7 +195,10 @@ async function cutTake(job, work, rawWords, { ranges = null, useClaude } = {}) {
     }).filter(Boolean);
   }
   writeFileSync(join(work, "keep.json"), JSON.stringify({ segments: segs, fixes: cuts.fixes }, null, 1));
-  setJob(job.id, { step: "Cortando silencios y tomas falsas", progress: 0.2, summary: cuts.summary, brain: cuts.brain });
+  const burned = existsSync(join(work, "burned.json")) ? readJson(join(work, "burned.json")) : null;
+  const inf = existsSync(join(work, "info.json")) ? readJson(join(work, "info.json")) : {};
+  const lowRes = Math.min(inf.srcWidth || 1080, inf.srcHeight || 1920) < 700 ? `Tu vídeo es de poca resolución (${inf.srcWidth}×${inf.srcHeight}): saldrá algo borroso; sube la toma original en 1080p o 4K.` : null;
+  setJob(job.id, { step: "Cortando silencios y tomas falsas", progress: 0.2, summary: [lowRes, burned?.note, cuts.summary].filter(Boolean).join(" "), brain: cuts.brain });
   await py("cut.py", ["--work", work, "--keep", join(work, "keep.json"), "--enc", "cpu"]);
   return readJson(join(work, "words.json"));
 }

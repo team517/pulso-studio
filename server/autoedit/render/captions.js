@@ -140,7 +140,7 @@ function buildKaraoke(caps, input, geo, hidden) {
       spans += `<span id="${id}w${k}" class="kw${w.key ? " gold" : ""}"><span id="${id}h${k}" class="hl"></span><span class="kt">${esc(w.w)}</span></span>`;
       const t = Math.max(s, Math.min(w.t, e - 0.08));
       const tn = k + 1 < p.words.length ? Math.max(t + 0.08, Math.min(p.words[k + 1].t, e)) : e;
-      js.push(`ctl.fromTo("#${id}w${k}", { opacity: .4 }, { opacity: 1, duration: 0.1, ease: "none" }, ${r3(t)});`);
+      js.push(`ctl.fromTo("#${id}w${k}", { opacity: ${S().user ? ".72" : ".4"} }, { opacity: 1, duration: 0.1, ease: "none" }, ${r3(t)});`);
       js.push(`ctl.fromTo("#${id}h${k}", { opacity: 0, scale: .8 }, { opacity: 1, scale: 1, duration: 0.14, ease: "power2.out" }, ${r3(t)});`);
       js.push(`ctl.fromTo("#${id}w${k} .kt", { scale: 1 }, { scale: 1.08, duration: 0.14, ease: "power2.out" }, ${r3(t)});`);
       if (tn < e - 0.02) {
