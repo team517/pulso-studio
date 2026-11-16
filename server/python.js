@@ -23,6 +23,15 @@ function userSites() {
     const base = join(r, "Python");
     try { for (const v of readdirSync(base)) { const p = join(base, v, "site-packages"); if (existsSync(p)) out.push(p); } } catch { /* nada */ }
   }
+  // Lo instalado desde la app de Claude (Windows la guarda aparte: AppData\Local\Packages\<app>\LocalCache\Roaming)
+  const pk = join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Packages");
+  try {
+    for (const app of readdirSync(pk)) {
+      const base = join(pk, app, "LocalCache", "Roaming", "Python");
+      if (!existsSync(base)) continue;
+      for (const v of readdirSync(base)) { const p = join(base, v, "site-packages"); if (existsSync(join(p, "torch"))) out.unshift(p); }
+    }
+  } catch { /* nada */ }
   try { for (const v of readdirSync(join(homedir(), ".local", "lib"))) { const p = join(homedir(), ".local", "lib", v, "site-packages"); if (existsSync(p)) out.push(p); } } catch { /* nada */ }
   return [...new Set(out)];
 }
