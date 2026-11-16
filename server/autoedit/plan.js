@@ -1,6 +1,6 @@
 // Lo que decide Claude (cortes, frases, palabras clave, gráficos, zooms, gancho, texto de la publicación)
 // y cómo se convierte en la entrada del renderizador (CONTRACT.md). Con reglas fijas si no hay Claude.
-import { askClaude, NeedLogin } from "./brain.js";
+import { askClaude, NeedLogin, lastProvider } from "./brain.js";
 import { findIssues, heuristicDrops } from "./analysis.js";
 
 /* ---------- Las 5 versiones ---------- */
@@ -29,7 +29,7 @@ export async function decideCuts(words, { vocab = "", useClaude = true } = {}) {
     try {
       const prompt = `Eres editor de vídeo profesional de reels en español. Te paso la transcripción palabra a palabra de una toma hablada a cámara (índice, segundo, palabra; "(?)" = Whisper no está seguro).
 Decide qué QUITAR para que quede fluido: tomas falsas (cuando repite una frase, quédate con la ÚLTIMA buena), arranques fallidos, muletillas («eh», «em», «o sea» sueltos), tartamudeos y frases cortadas que luego repite. NO quites contenido con sentido. Las pausas se quitan solas, no hace falta que las marques.
-Corrige también palabras mal transcritas (nombres, marcas, cifras).${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
+Corrige también palabras que Whisper ha oído MAL (nombres, marcas, términos técnicos que no existen como «Codefemail» → «cold email»). NUNCA cambies cifras, años, fechas ni datos que suenan bien escritos: no corrijas lo que dice la persona, solo lo que Whisper transcribió mal.${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
 
 Pausas largas detectadas (después de la palabra): ${JSON.stringify(pauses.slice(0, 200))}
 Repeticiones detectadas: ${JSON.stringify(repeats.slice(0, 100))}
@@ -42,7 +42,7 @@ Responde SOLO con JSON:
 ("desde" y "hasta" son índices incluidos. "fixes" con la palabra exacta tal como aparece; valor null para borrarla.)`;
       const r = await askClaude(prompt);
       const drop = (Array.isArray(r.drop) ? r.drop : []).filter((d) => Array.isArray(d) && d.length === 2 && d[0] <= d[1] && d[0] >= 0 && d[1] < words.length);
-      return { drop, fixes: r.fixes && typeof r.fixes === "object" ? r.fixes : {}, summary: r.resumen || "", brain: "claude" };
+      return { drop, fixes: r.fixes && typeof r.fixes === "object" ? r.fixes : {}, summary: r.resumen || "", brain: lastProvider() || "claude" };
     } catch (e) {
       if (!(e instanceof NeedLogin)) console.warn("[autoedit] cortes con Claude fallaron, uso reglas:", e.message);
       else throw e;
@@ -75,7 +75,7 @@ PALABRAS:
 ${wordList(words)}
 
 Devuelve el plan de edición. Reglas:
-1. "phrases": cubre TODAS las palabras en orden, sin saltos ni solapes. Cada frase tiene "chunks" (rangos [desde,hasta] de 1-3 palabras que se leen bien juntos) y "key" = índice del chunk con la PALABRA CLAVE de esa frase (una por frase, la que más importa).
+1. "phrases": cubre TODAS las palabras en orden, sin saltos ni solapes. Una frase = una idea (acaba en punto, coma fuerte o pausa). Cada frase tiene "chunks" (rangos [desde,hasta] de 1-3 palabras que se leen juntos con sentido: nunca acabes un chunk en «de», «y», «que», «el», «la», «un», «a», «en»; esas van al principio del siguiente) y "key" = índice del chunk que lleva la PALABRA CLAVE (una por frase, la que más importa). El chunk clave debe tener SOLO la palabra clave o la expresión clave (1-2 palabras, p. ej. «automático», «30 reuniones»), sin artículos ni conjunciones.
 2. "graphics": un gráfico por idea, disparado en su palabra ("from" = índice de la palabra que lo provoca, "to" = índice hasta el que se queda, 2-5 s). Uno cada 4-7 s aprox., nunca dos a la vez. Nada inventado: solo lo que dice la persona. Marca en "layouts" en qué versiones va: "reference" (todos), "headline" y "framed" (los 2-4 más fuertes), "horizontal" (3-5), "minimal" (solo stat).
 3. "behind": 2-3 palabras gigantes (1 palabra, MAYÚSCULAS, la idea fuerte) que salen detrás de la cabeza durante 1-2 s en su palabra; no coincidan con gráficos.
 4. "zooms": 4-8 zooms suaves (to entre 1.03 y 1.10) hacia los momentos importantes; el primero a 0 con to 1.0 (el gancho se asienta desde 1.08).
@@ -92,7 +92,7 @@ Responde SOLO con JSON:
  "zooms":[{"at":0,"to":1.0,"dur":1.6},{"at":i,"to":1.05,"dur":1.6}]}`;
       const plan = await askClaude(prompt);
       const fixed = validatePlan(plan, words);
-      if (fixed) return { ...fixed, brain: "claude" };
+      if (fixed) return { ...fixed, brain: lastProvider() || "claude" };
       console.warn("[autoedit] plan de Claude no válido, uso reglas");
     } catch (e) {
       if (e instanceof NeedLogin) throw e;
@@ -106,15 +106,7 @@ Responde SOLO con JSON:
 export function validatePlan(plan, words) {
   const n = words.length;
   if (!plan || !Array.isArray(plan.phrases) || !n) return null;
-  // Frases: se rehacen si dejan huecos o se solapan
-  let next = 0, ok = true;
-  const phrases = [];
-  for (const ph of plan.phrases) {
-    const chunks = (ph.chunks || []).filter((c) => Array.isArray(c) && c.length === 2);
-    for (const [a, b] of chunks) { if (a !== next || b < a || b >= n || b - a > 3) ok = false; next = b + 1; }
-    if (chunks.length) phrases.push({ chunks, key: Math.min(Math.max(0, ph.key | 0), chunks.length - 1) });
-  }
-  if (!ok || next !== n) phrases.splice(0, phrases.length, ...heuristicPhrases(words));
+  const phrases = repairPhrases(plan.phrases, words);
   const idx = (i) => Math.min(n - 1, Math.max(0, i | 0));
   const icon = (i) => (ICONS.includes(i) ? i : "star");
   const graphics = (Array.isArray(plan.graphics) ? plan.graphics : [])
@@ -139,6 +131,60 @@ export function validatePlan(plan, words) {
     behind: (Array.isArray(plan.behind) ? plan.behind : []).filter((b) => b?.text).map((b) => ({ from: idx(b.from), to: idx(b.to ?? b.from), text: String(b.text).toUpperCase().slice(0, 14) })),
     zooms: (Array.isArray(plan.zooms) ? plan.zooms : []).filter((z) => Number.isFinite(z.at)).map((z) => ({ at: idx(z.at), to: Math.min(1.1, Math.max(1, Number(z.to) || 1)), dur: Math.min(4, Math.max(0.6, Number(z.dur) || 1.6)) })),
   };
+}
+
+/**
+ * Frases de la IA arregladas sin tirarlas: se respetan sus puntos de corte (inicio de frase y de trozo)
+ * y su palabra clave; se rellenan huecos, se quitan solapes y se parten los trozos de más de 3 palabras.
+ */
+function repairPhrases(modelPhrases, words) {
+  const n = words.length;
+  const phraseStarts = new Set([0]);
+  const chunkStarts = new Set([0]);
+  const keyStarts = new Set();
+  for (const ph of Array.isArray(modelPhrases) ? modelPhrases : []) {
+    const chunks = (ph?.chunks || []).filter((c) => Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1]));
+    if (!chunks.length) continue;
+    const a0 = Math.max(0, Math.min(n - 1, chunks[0][0] | 0));
+    phraseStarts.add(a0);
+    chunks.forEach(([a, b], k) => {
+      a = Math.max(0, Math.min(n - 1, a | 0)); b = Math.max(a, Math.min(n - 1, b | 0));
+      chunkStarts.add(a);
+      if (b + 1 < n) chunkStarts.add(b + 1);
+      if (k === (ph.key | 0)) keyStarts.add(a);
+    });
+  }
+  if (phraseStarts.size <= 1 && chunkStarts.size <= 1) return heuristicPhrases(words);
+  for (const s of phraseStarts) chunkStarts.add(s);
+  const starts = [...chunkStarts].filter((x) => x >= 0 && x < n).sort((a, b) => a - b);
+  // Trozos seguidos; los de más de 3 palabras se parten
+  const chunks = [];
+  starts.forEach((s, i) => {
+    const e = (i + 1 < starts.length ? starts[i + 1] : n) - 1;
+    for (let a = s; a <= e; a += 3) chunks.push([a, Math.min(e, a + 2)]);
+  });
+  // Agrupar en frases
+  const phrases = [];
+  for (const c of chunks) {
+    if (!phrases.length || phraseStarts.has(c[0])) phrases.push({ chunks: [], key: 0 });
+    phrases[phrases.length - 1].chunks.push(c);
+  }
+  for (const ph of phrases) {
+    const k = ph.chunks.findIndex(([a]) => keyStarts.has(a));
+    if (k >= 0) ph.key = k;
+    else {
+      // Sin clave marcada: la palabra más larga o una cifra
+      let best = -1;
+      ph.chunks.forEach(([a, b], idx) => {
+        for (let i = a; i <= b; i++) {
+          const w = words[i].w.replace(/[^\p{L}\p{N}]/gu, "");
+          const score = /\d/.test(w) ? 100 : w.length;
+          if (score > best) { best = score; ph.key = idx; }
+        }
+      });
+    }
+  }
+  return phrases;
 }
 
 /* ---------- Reglas fijas (sin Claude) ---------- */

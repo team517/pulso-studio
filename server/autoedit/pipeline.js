@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import { db, DIRS, DATA, uid, now, row } from "../db.js";
 import { run, makeThumb } from "../media.js";
 import { onGpu } from "../gpu.js";
-import { NeedLogin, askClaude, claudeReady } from "./brain.js";
+import { NeedLogin, askClaude, claudeReady, canSeeImages } from "./brain.js";
+import { ffStderr } from "./analysis.js";
 import { analyzeAudio, keepSegments } from "./analysis.js";
+void claudeReady;
 import { VARIANTS, decideCuts, makePlan, renderInputFor, pickShorts, validatePlan } from "./plan.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -165,8 +167,35 @@ const SFX_FILES = {
 };
 
 /** Revisión automática: Claude mira fotogramas clave con la lista de la skill. */
+/** Revisión medida (sin mirar imágenes): fotogramas negros, imagen congelada, volumen, pico y duración. */
+async function measuredReview(finalMp4, input) {
+  const issues = [];
+  const err = await ffStderr(["-hide_banner", "-i", finalMp4, "-vf", "blackdetect=d=0.25:pix_th=0.06,freezedetect=n=0.002:d=1.2", "-af", "ebur128=peak=true", "-f", "null", "-"]);
+  for (const m of err.matchAll(/black_start:([\d.]+) black_end:([\d.]+)/g)) {
+    const a = Number(m[1]), b = Number(m[2]);
+    const inScene = input.graphics.some((g) => g.type === "scene" && a >= g.start - 0.3 && b <= g.end + 0.3);
+    if (!inScene) issues.push({ t: a, problem: `Pantalla negra de ${(b - a).toFixed(1)} s`, fix: "Revisar el corte o el gráfico en ese momento" });
+  }
+  for (const m of err.matchAll(/freeze_start: ([\d.]+)[\s\S]*?freeze_duration: ([\d.]+)/g)) {
+    const a = Number(m[1]), d = Number(m[2]);
+    const inScene = input.graphics.some((g) => g.type === "scene" && a >= g.start - 0.3 && a + d <= g.end + 0.5);
+    if (!inScene) issues.push({ t: a, problem: `La imagen se queda congelada ${d.toFixed(1)} s`, fix: "Puede faltar vídeo en ese tramo" });
+  }
+  const lufs = Number((err.match(/I:\s+(-?[\d.]+) LUFS/g) || []).pop()?.match(/-?[\d.]+/)?.[0]);
+  const peak = Number((err.match(/Peak:\s+(-?[\d.]+) dBFS/g) || []).pop()?.match(/-?[\d.]+/)?.[0]);
+  if (Number.isFinite(lufs) && Math.abs(lufs + 14) > 1) issues.push({ problem: `Volumen ${lufs} LUFS (debería ser −14)` });
+  if (Number.isFinite(peak) && peak > -0.9) issues.push({ problem: `Pico de audio ${peak} dB (demasiado alto, puede sonar saturado)` });
+  const dur = Number((await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", finalMp4]).catch(() => "0")).trim());
+  if (Math.abs(dur - input.duration) > 0.5) issues.push({ problem: `Dura ${dur.toFixed(1)} s y debería durar ${input.duration.toFixed(1)} s` });
+  return { issues, lufs: Number.isFinite(lufs) ? lufs : null, peak: Number.isFinite(peak) ? peak : null };
+}
+
 async function autoReview(item, finalMp4, input, dir) {
-  if (!(await claudeReady())) return { checked: false, ok: null, issues: [], note: "Sin revisión automática (Claude sin sesión)." };
+  const measured = await measuredReview(finalMp4, input).catch(() => ({ issues: [], lufs: null, peak: null }));
+  const audio = measured.lufs != null ? `Audio: ${measured.lufs} LUFS, pico ${measured.peak} dB.` : "";
+  if (!(await canSeeImages())) {
+    return { checked: true, ok: measured.issues.length === 0, issues: measured.issues, note: `Revisión medida (sin mirar la imagen: el cerebro actual no ve fotogramas). ${audio}`.trim() };
+  }
   const times = new Set([0.5, Math.max(0.5, input.duration - 1)]);
   for (const g of input.graphics) times.add(+(g.start + 0.7).toFixed(2));
   for (const z of input.zooms) times.add(+Math.min(input.duration - 0.2, z.t + z.dur).toFixed(2));
@@ -186,7 +215,8 @@ async function autoReview(item, finalMp4, input, dir) {
 - ¿Algo se ve roto, vacío o feo?
 Responde SOLO con JSON: {"ok": true|false, "score": 1-10, "issues": [{"t": segundo, "problem": "...", "fix": "..."}], "summary": "una frase"}`,
       { images: frames.map((x) => x.f), dir, timeoutMs: 6 * 60e3 });
-    return { checked: true, ok: !!r.ok, score: r.score ?? null, issues: Array.isArray(r.issues) ? r.issues.slice(0, 12) : [], note: String(r.summary || "") };
+    const issues = [...measured.issues, ...(Array.isArray(r.issues) ? r.issues.slice(0, 12) : [])];
+    return { checked: true, ok: !!r.ok && measured.issues.length === 0, score: r.score ?? null, issues, note: `${String(r.summary || "")} ${audio}`.trim() };
   } catch (e) {
     if (e instanceof NeedLogin) return { checked: false, ok: null, issues: [], note: e.message };
     return { checked: false, ok: null, issues: [], note: "No se pudo hacer la revisión automática: " + e.message.slice(0, 200) };

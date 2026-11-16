@@ -13,7 +13,7 @@ const STEP_LABEL: Record<AutoItem["status"], string> = { queued: "En cola", rend
 
 export default function AutoEdit() {
   const toast = useToast();
-  const [info, setInfo] = useState<{ claude: boolean; variants: AutoVariant[] } | null>(null);
+  const [info, setInfo] = useState<{ claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] } | null>(null);
   const [jobs, setJobs] = useState<AutoJob[] | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
   const [creating, setCreating] = useState(false);
@@ -71,8 +71,7 @@ function ClaudeLoginNote() {
     <div className="note note--warn ae-login">
       <Terminal size={18} />
       <div>
-        <b>Claude no tiene la sesión iniciada en este ordenador.</b> Es el que decide los cortes, las palabras clave y qué gráfico va en cada frase.
-        Para activarlo una vez: abre una terminal, escribe <span className="mono">claude</span>, pulsa Enter y escribe <span className="mono">/login</span>. Sin él se puede editar con reglas fijas, pero queda bastante peor.
+        <b>No hay ninguna IA disponible.</b> Es la que decide los cortes, las palabras clave y qué gráfico va en cada frase. Sin ella se edita con reglas fijas y queda bastante peor.
       </div>
     </div>
   );
@@ -81,7 +80,7 @@ function ClaudeLoginNote() {
 /* ---------- Nueva edición ---------- */
 
 function NewJob({ info, media, onMedia, onClose, onCreated }: {
-  info: { claude: boolean; variants: AutoVariant[] }; media: Media[]; onMedia: (m: Media[]) => void; onClose: () => void; onCreated: () => void;
+  info: { claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] }; media: Media[]; onMedia: (m: Media[]) => void; onClose: () => void; onCreated: () => void;
 }) {
   const toast = useToast();
   const videos = media.filter((m) => m.kind === "video");
@@ -110,7 +109,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
   return (
     <Modal wide title="Nueva edición automática" icon={<Sparkles size={18} color="var(--accent-2)" />} onClose={onClose}
       foot={<>
-        <span className="muted" style={{ fontSize: 12.5 }}>{info.claude ? "Edita Claude, en tu ordenador." : "Sin Claude: se editará con reglas fijas."}</span>
+        <span className="muted" style={{ fontSize: 12.5 }}>{info.provider === "claude" ? "Edita Claude." : info.provider === "deepseek" ? "Edita la IA (DeepSeek)." : "Sin IA: se editará con reglas fijas."}</span>
         <span className="spacer" />
         <button className="btn" onClick={onClose}>Cancelar</button>
         <button className="btn btn--primary" disabled={busy || !mediaId || (kind === "variants" && !variants.length)} onClick={() => start()}>
@@ -190,7 +189,7 @@ function JobCard({ job, onChange }: { job: AutoJob; onChange: () => void }) {
           <h3>{job.plan?.topic || job.name}</h3>
           <div className="ae-job__meta">
             <span className="pill">{job.kind === "shorts" ? <><Scissors size={12} /> Shorts</> : <><Sparkles size={12} /> {job.items.length || job.options?.variants.length} versiones</>}</span>
-            {job.brain && <span className={"pill " + (job.brain === "claude" ? "pill--accent" : "pill--warn")}>{job.brain === "claude" ? "Editado por Claude" : "Reglas fijas"}</span>}
+            {job.brain && <span className={"pill " + (job.brain === "reglas" ? "pill--warn" : "pill--accent")}>{job.brain === "claude" ? "Editado por Claude" : job.brain === "deepseek" ? "Editado por la IA (DeepSeek)" : "Reglas fijas"}</span>}
             {job.items.length > 0 && <span className="muted">{ready} de {job.items.length} listas</span>}
             <span className="muted">{new Date(job.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
           </div>
@@ -212,10 +211,10 @@ function JobCard({ job, onChange }: { job: AutoJob; onChange: () => void }) {
           )}
           {job.status === "needs_login" && (
             <div className="note note--warn ae-job__note">
-              <div><b>Falta iniciar sesión en Claude.</b> Abre una terminal, escribe <span className="mono">claude</span> y luego <span className="mono">/login</span>. Después pulsa «Reintentar».</div>
+              <div><b>No había ninguna IA disponible.</b> Pulsa «Reintentar» cuando esté lista, o sigue con reglas fijas.</div>
               <div className="row" style={{ marginTop: 10 }}>
                 <button className="btn btn--sm btn--primary" onClick={async () => { await autoApi.retry(job.id); onChange(); }}><RotateCcw size={14} /> Reintentar</button>
-                <button className="btn btn--sm" onClick={async () => { await autoApi.useRules(job.id); onChange(); toast("Editando con reglas fijas"); }}>Seguir sin Claude</button>
+                <button className="btn btn--sm" onClick={async () => { await autoApi.useRules(job.id); onChange(); toast("Editando con reglas fijas"); }}>Seguir sin IA</button>
               </div>
             </div>
           )}

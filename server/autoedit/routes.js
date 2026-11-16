@@ -1,10 +1,11 @@
 // Rutas de la auto-edición.
 import { createJob, jobView, listJobs, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick } from "./pipeline.js";
-import { claudeReady } from "./brain.js";
+import { aiProvider } from "./brain.js";
 
 export function registerAutoeditRoutes(app, wrap) {
   app.get("/api/autoedit/info", wrap(async (req, res) => {
-    res.json({ claude: await claudeReady(), variants: VARIANTS.map((v) => ({ key: v.key, label: v.label, layout: v.layout, width: v.width, height: v.height })) });
+    const provider = await aiProvider();
+    res.json({ claude: !!provider, provider, variants: VARIANTS.map((v) => ({ key: v.key, label: v.label, layout: v.layout, width: v.width, height: v.height })) });
   }));
   app.get("/api/autoedit/jobs", wrap((req, res) => res.json(listJobs())));
   app.post("/api/autoedit/jobs", wrap((req, res) => {
