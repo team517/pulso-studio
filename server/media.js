@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { db, DIRS } from "./db.js";
+import { onGpu } from "./gpu.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -47,9 +48,8 @@ export async function makeThumb(file, outName, at = 0.5) {
 
 /* ---------- Transcripción (Whisper en la GPU) ---------- */
 
-// De uno en uno: dos modelos a la vez no caben en la memoria de la GPU
+// De uno en uno: dos modelos a la vez no caben en la memoria de la GPU (cola compartida en gpu.js)
 const queued = new Set();
-let chain = Promise.resolve();
 
 // Si el servidor se cerró a mitad de una transcripción, se deja lista para repetirla
 db.prepare("UPDATE media SET transcript_status = NULL WHERE transcript_status = 'running'").run();
@@ -61,8 +61,7 @@ export function transcribe(mediaId, language = "es") {
   queued.add(mediaId);
   db.prepare("UPDATE media SET transcript_status = 'running' WHERE id = ?").run(mediaId);
   const file = join(DIRS.media, m.file);
-  chain = chain
-    .then(() => run("python", [join(HERE, "transcribe.py"), file, language]))
+  onGpu(() => run("python", [join(HERE, "transcribe.py"), file, language]))
     .then((out) => {
       const line = out.trim().split("\n").pop();
       const words = JSON.parse(line);

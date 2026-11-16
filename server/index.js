@@ -9,6 +9,7 @@ import { probe, makeThumb, transcribe } from "./media.js";
 import { createExport } from "./render.js";
 import { PORT, PLATFORMS, status as platformStatus, configure, disconnect, authUrl, handleCallback, publicUrl, checkInstagram, getConf } from "./platforms.js";
 import { startScheduler, runPost } from "./scheduler.js";
+import { registerAutoeditRoutes } from "./autoedit/routes.js";
 
 const app = express();
 app.use(express.json({ limit: "20mb" }));
@@ -291,6 +292,10 @@ app.get("/api/auth/:p/callback", async (req, res) => {
     res.redirect(`${front}${back}?error=${encodeURIComponent(e.message)}`);
   }
 });
+
+/* ---------- Auto-edición (5 versiones / shorts) ---------- */
+
+registerAutoeditRoutes(app, wrap);
 
 /* ---------- Web (versión compilada) ---------- */
 

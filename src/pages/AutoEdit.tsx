@@ -1,0 +1,336 @@
+// Auto-edición: sube un vídeo hablado y salen 5 versiones editadas (o shorts de un vídeo largo),
+// cada una en cuanto está lista. Tú las revisas antes de publicar.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronUp, Download, FlaskConical, Loader2, MessageSquareText, RotateCcw, Scissors, ShieldCheck, Sparkles, Terminal, Trash2, Upload, X } from "lucide-react";
+import { api, fmtSize, fmtTime, type Media } from "../api";
+import { autoApi, setPrefill, type AutoItem, type AutoJob, type AutoVariant } from "../autoedit-api";
+import { Field, Modal, navigate, useToast } from "../ui";
+import { ACCEPT, useUploader } from "../editor/MediaPanel";
+import "./autoedit.css";
+
+const LAYOUT_SHAPE: Record<string, [number, number]> = { reference: [9, 16], headline: [9, 16], minimal: [9, 16], horizontal: [16, 9], framed: [4, 5] };
+const STEP_LABEL: Record<AutoItem["status"], string> = { queued: "En cola", rendering: "Renderizando", mixing: "Sonido", qa: "Revisando", done: "Lista", error: "Error" };
+
+export default function AutoEdit() {
+  const toast = useToast();
+  const [info, setInfo] = useState<{ claude: boolean; variants: AutoVariant[] } | null>(null);
+  const [jobs, setJobs] = useState<AutoJob[] | null>(null);
+  const [media, setMedia] = useState<Media[]>([]);
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(() => autoApi.jobs().then(setJobs).catch((e) => { setJobs([]); toast(e.message, "bad"); }), [toast]);
+  useEffect(() => {
+    load();
+    autoApi.info().then(setInfo).catch(() => {});
+    api.media().then(setMedia).catch(() => {});
+  }, [load]);
+
+  // Mientras haya algo en marcha, se refresca solo (así cada versión aparece en cuanto acaba)
+  const active = jobs?.some((j) => j.status === "running" || j.status === "queued" || j.items.some((i) => !["done", "error"].includes(i.status)));
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [active, load]);
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1>Auto-edición</h1>
+          <p>Sube un vídeo tuyo hablando y te devuelve 5 versiones editadas a la perfección (cortes, subtítulos, gráficos, zooms, efectos y música), o varios shorts de un vídeo largo. Cada versión te llega en cuanto está lista; tú decides cuál se publica.</p>
+        </div>
+        <div className="page-head__actions">
+          <button className="btn btn--primary" onClick={() => setCreating(true)}><Sparkles size={16} /> Nueva edición</button>
+        </div>
+      </div>
+
+      {info && !info.claude && <ClaudeLoginNote />}
+
+      {jobs === null ? <p className="muted">Cargando…</p> : jobs.length === 0 ? (
+        <div className="empty">
+          <div className="empty__icon"><Sparkles size={24} /></div>
+          <h3>Todavía no has editado nada</h3>
+          <p>Elige un vídeo en el que hables a cámara. Lo ideal: buena luz, sonido limpio y que se te vea de cintura para arriba.</p>
+          <button className="btn btn--primary" onClick={() => setCreating(true)}><Sparkles size={16} /> Nueva edición</button>
+        </div>
+      ) : (
+        <div className="ae-jobs">{jobs.map((j) => <JobCard key={j.id} job={j} onChange={load} />)}</div>
+      )}
+
+      {creating && info && (
+        <NewJob info={info} media={media} onMedia={(m) => setMedia((l) => [...m, ...l])} onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); load(); toast("¡En marcha! Cada versión aparecerá aquí en cuanto esté lista."); }} />
+      )}
+    </div>
+  );
+}
+
+function ClaudeLoginNote() {
+  return (
+    <div className="note note--warn ae-login">
+      <Terminal size={18} />
+      <div>
+        <b>Claude no tiene la sesión iniciada en este ordenador.</b> Es el que decide los cortes, las palabras clave y qué gráfico va en cada frase.
+        Para activarlo una vez: abre una terminal, escribe <span className="mono">claude</span>, pulsa Enter y escribe <span className="mono">/login</span>. Sin él se puede editar con reglas fijas, pero queda bastante peor.
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Nueva edición ---------- */
+
+function NewJob({ info, media, onMedia, onClose, onCreated }: {
+  info: { claude: boolean; variants: AutoVariant[] }; media: Media[]; onMedia: (m: Media[]) => void; onClose: () => void; onCreated: () => void;
+}) {
+  const toast = useToast();
+  const videos = media.filter((m) => m.kind === "video");
+  const [mediaId, setMediaId] = useState(videos[0]?.id ?? "");
+  const [kind, setKind] = useState<"variants" | "shorts">("variants");
+  const [variants, setVariants] = useState(info.variants.map((v) => v.key));
+  const [shorts, setShorts] = useState(3);
+  const [vocab, setVocab] = useState("");
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const { upload, busy: uploading } = useUploader((m) => { onMedia(m); const v = m.find((x) => x.kind === "video"); if (v) setMediaId(v.id); });
+  const sel = videos.find((v) => v.id === mediaId);
+  const long = (sel?.duration ?? 0) > 120;
+
+  useEffect(() => { if (long) setKind("shorts"); }, [long]);
+
+  async function start(allowRules = false) {
+    if (!mediaId) return toast("Elige o sube un vídeo.", "bad");
+    setBusy(true);
+    try {
+      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules: allowRules || !info.claude });
+      onCreated();
+    } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal wide title="Nueva edición automática" icon={<Sparkles size={18} color="var(--accent-2)" />} onClose={onClose}
+      foot={<>
+        <span className="muted" style={{ fontSize: 12.5 }}>{info.claude ? "Edita Claude, en tu ordenador." : "Sin Claude: se editará con reglas fijas."}</span>
+        <span className="spacer" />
+        <button className="btn" onClick={onClose}>Cancelar</button>
+        <button className="btn btn--primary" disabled={busy || !mediaId || (kind === "variants" && !variants.length)} onClick={() => start()}>
+          {busy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />} Empezar
+        </button>
+      </>}>
+      <Field label="Vídeo" right={<button className="btn btn--ghost btn--sm" onClick={() => input.current?.click()} disabled={!!uploading}>{uploading ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Subir otro</button>}>
+        <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => { upload([...(e.target.files ?? [])]); e.target.value = ""; }} />
+        {videos.length === 0 ? (
+          <button className="mp__drop" onClick={() => input.current?.click()}><Upload size={22} /><span>Sube el vídeo en el que hablas</span></button>
+        ) : (
+          <div className="ae-pick">
+            {videos.map((v) => (
+              <button key={v.id} type="button" className={"ae-pick__item" + (v.id === mediaId ? " is-on" : "")} onClick={() => setMediaId(v.id)} title={v.name}>
+                <span className="ae-pick__thumb" style={v.thumbUrl ? { backgroundImage: `url(${v.thumbUrl})` } : undefined}><span className="mono">{fmtTime(v.duration)}</span></span>
+                <span className="ae-pick__name">{v.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Field>
+
+      <Field label="Qué quieres">
+        <div className="ae-modes">
+          <button type="button" className={"ae-mode" + (kind === "variants" ? " is-on" : "")} onClick={() => setKind("variants")}>
+            <b>Versiones de este vídeo</b><small>El mismo vídeo editado de 5 formas distintas para ver cuál funciona mejor.</small>
+          </button>
+          <button type="button" className={"ae-mode" + (kind === "shorts" ? " is-on" : "")} onClick={() => setKind("shorts")}>
+            <b>Shorts de un vídeo largo</b><small>Claude elige los mejores momentos y los edita como reels de 25-60 s.</small>
+          </button>
+        </div>
+      </Field>
+
+      {kind === "variants" ? (
+        <Field label="Versiones" hint="Se entregan en este orden; puedes ver cada una en cuanto acaba.">
+          <div className="ae-vars">
+            {info.variants.map((v) => {
+              const on = variants.includes(v.key);
+              const [w, h] = LAYOUT_SHAPE[v.layout] ?? [9, 16];
+              return (
+                <button key={v.key} type="button" className={"ae-var" + (on ? " is-on" : "")} onClick={() => setVariants((l) => (on ? l.filter((k) => k !== v.key) : [...l, v.key]))}>
+                  <span className="ae-var__shape" style={{ width: (w / Math.max(w, h)) * 30, height: (h / Math.max(w, h)) * 30 }} />
+                  <span><b>{v.label}</b><small>{v.width}×{v.height}</small></span>
+                  <span className="ae-var__check">{on && <Check size={13} />}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      ) : (
+        <Field label="Cuántos shorts" hint={long ? undefined : "Funciona mejor con vídeos de más de 2 minutos."}>
+          <div className="seg">{[2, 3, 4, 5, 6].map((n) => <button key={n} className={shorts === n ? "is-on" : ""} onClick={() => setShorts(n)}>{n}</button>)}</div>
+        </Field>
+      )}
+
+      <Field label="Nombres y marcas que salen (opcional)" hint="Para que Whisper los escriba bien en los subtítulos. Ej.: OnePulso, cold email, LinkedIn.">
+        <input className="input" value={vocab} onChange={(e) => setVocab(e.target.value)} placeholder="OnePulso, cold email, LinkedIn…" />
+      </Field>
+    </Modal>
+  );
+}
+
+/* ---------- Trabajo ---------- */
+
+function JobCard({ job, onChange }: { job: AutoJob; onChange: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(true);
+  const [askDel, setAskDel] = useState(false);
+  const running = job.status === "running" || job.status === "queued";
+  const ready = job.items.filter((i) => i.status === "done").length;
+
+  return (
+    <section className="card ae-job">
+      <header className="ae-job__head">
+        <span className="ae-job__thumb" style={job.media?.thumbUrl ? { backgroundImage: `url(${job.media.thumbUrl})` } : undefined} />
+        <div className="ae-job__title">
+          <h3>{job.plan?.topic || job.name}</h3>
+          <div className="ae-job__meta">
+            <span className="pill">{job.kind === "shorts" ? <><Scissors size={12} /> Shorts</> : <><Sparkles size={12} /> {job.items.length || job.options?.variants.length} versiones</>}</span>
+            {job.brain && <span className={"pill " + (job.brain === "claude" ? "pill--accent" : "pill--warn")}>{job.brain === "claude" ? "Editado por Claude" : "Reglas fijas"}</span>}
+            {job.items.length > 0 && <span className="muted">{ready} de {job.items.length} listas</span>}
+            <span className="muted">{new Date(job.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        </div>
+        <span className="spacer" />
+        {askDel ? (
+          <><span className="muted">¿Quitar de la lista?</span><button className="btn btn--sm btn--danger" onClick={async () => { await autoApi.remove(job.id); onChange(); }}>Sí</button><button className="btn btn--sm" onClick={() => setAskDel(false)}>No</button></>
+        ) : !running && <button className="btn btn--ghost btn--icon btn--sm" title="Quitar de la lista (los vídeos se quedan en «Vídeos exportados»)" onClick={() => setAskDel(true)}><Trash2 size={15} /></button>}
+        <button className="btn btn--ghost btn--icon btn--sm" onClick={() => setOpen((o) => !o)} aria-label={open ? "Plegar" : "Desplegar"}>{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
+      </header>
+
+      {open && (
+        <>
+          {running && (
+            <div className="ae-progress">
+              <div className="row"><Loader2 size={15} className="spin" /> <span>{job.step || "Trabajando…"}</span><span className="spacer" /><span className="mono">{Math.round(job.progress * 100)} %</span></div>
+              <div className="progress"><span style={{ width: `${Math.max(3, job.progress * 100)}%` }} /></div>
+            </div>
+          )}
+          {job.status === "needs_login" && (
+            <div className="note note--warn ae-job__note">
+              <div><b>Falta iniciar sesión en Claude.</b> Abre una terminal, escribe <span className="mono">claude</span> y luego <span className="mono">/login</span>. Después pulsa «Reintentar».</div>
+              <div className="row" style={{ marginTop: 10 }}>
+                <button className="btn btn--sm btn--primary" onClick={async () => { await autoApi.retry(job.id); onChange(); }}><RotateCcw size={14} /> Reintentar</button>
+                <button className="btn btn--sm" onClick={async () => { await autoApi.useRules(job.id); onChange(); toast("Editando con reglas fijas"); }}>Seguir sin Claude</button>
+              </div>
+            </div>
+          )}
+          {job.status === "error" && (
+            <div className="note note--bad ae-job__note">
+              <div><b>Se paró:</b> {job.error}</div>
+              <button className="btn btn--sm" style={{ marginTop: 10 }} onClick={async () => { await autoApi.retry(job.id); onChange(); }}><RotateCcw size={14} /> Reintentar</button>
+            </div>
+          )}
+          {job.summary && <p className="ae-job__summary"><Scissors size={13} /> {job.summary}</p>}
+          {job.items.length > 0 && <div className="ae-items">{job.items.map((it) => <ItemCard key={it.id} item={it} onChange={onChange} />)}</div>}
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ---------- Versión ---------- */
+
+function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) {
+  const toast = useToast();
+  const [changes, setChanges] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
+  const [w, h] = LAYOUT_SHAPE[item.layout] ?? [9, 16];
+  const working = !["done", "error"].includes(item.status);
+  const qa = item.qa;
+  const qaTone = !qa?.checked ? "muted" : qa.ok ? "ok" : "warn";
+
+  const review = async (r: AutoItem["review"]) => { await autoApi.review(item.id, r); onChange(); };
+  const schedule = (trial: boolean) => {
+    if (!item.video) return;
+    setPrefill({ exportId: item.video.id, caption: item.post?.caption, title: item.post?.youtubeTitle, trial });
+    navigate(`/calendario?nuevo=${item.video.id}`);
+  };
+
+  const shape = useMemo(() => ({ aspectRatio: `${w} / ${h}` }), [w, h]);
+
+  return (
+    <article className={"ae-item" + (item.review === "approved" ? " is-approved" : item.review === "rejected" ? " is-rejected" : "")}>
+      <div className="ae-item__media" style={shape}>
+        {item.status === "done" && item.video ? (
+          <video src={item.video.url} poster={item.video.thumbUrl ?? undefined} controls preload="metadata" />
+        ) : item.status === "error" ? (
+          <div className="ae-item__state ae-item__state--bad"><AlertTriangle size={22} /><span>No salió</span></div>
+        ) : (
+          <div className="ae-item__state">
+            <Loader2 size={22} className="spin" />
+            <span>{item.step || STEP_LABEL[item.status]}</span>
+            {item.status !== "queued" && <div className="progress" style={{ width: "70%" }}><span style={{ width: `${Math.max(4, item.progress * 100)}%` }} /></div>}
+          </div>
+        )}
+        {item.review === "approved" && <span className="ae-item__badge pill pill--ok"><Check size={12} /> Aprobada</span>}
+        {item.review === "rejected" && <span className="ae-item__badge pill pill--bad"><X size={12} /> Descartada</span>}
+      </div>
+
+      <div className="ae-item__body">
+        <div className="ae-item__head">
+          <b>{item.label}</b>
+          <span className="pill">{item.layout === "horizontal" ? "16:9" : item.layout === "framed" ? "4:5" : "9:16"}</span>
+        </div>
+        {item.short?.why && <p className="ae-item__why">{item.short.why}</p>}
+        {item.status === "error" && <p className="ae-item__err">{item.error}</p>}
+        {item.status === "done" && item.video && <span className="muted mono" style={{ fontSize: 12 }}>{fmtTime(item.video.duration, true)} · {fmtSize(item.video.size)}</span>}
+
+        {item.status === "done" && qa && (
+          <button className={"ae-qa ae-qa--" + qaTone} onClick={() => setQaOpen((o) => !o)}>
+            {qaTone === "ok" ? <ShieldCheck size={14} /> : qaTone === "warn" ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
+            {!qa.checked ? "Sin revisión automática" : qa.ok ? `Revisada: sin fallos${qa.score ? ` · ${qa.score}/10` : ""}` : `${qa.issues.length} aviso(s) de la revisión`}
+            {(qa.issues.length > 0 || qa.note) && (qaOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+          </button>
+        )}
+        {qaOpen && qa && (
+          <div className="ae-qa__list">
+            {qa.note && <p>{qa.note}</p>}
+            {qa.issues.map((i, k) => <p key={k}>{i.t != null && <span className="mono">{fmtTime(i.t, true)} · </span>}{i.problem}{i.fix && <span className="muted"> → {i.fix}</span>}</p>)}
+          </div>
+        )}
+        {item.notes && <p className="ae-item__notes"><MessageSquareText size={13} /> Tus cambios: {item.notes}</p>}
+
+        {item.status === "done" && item.video && (
+          <div className="ae-item__actions">
+            {item.review !== "approved" ? (
+              <button className="btn btn--sm btn--primary" onClick={() => review("approved")}><CheckCircle2 size={14} /> Aprobar</button>
+            ) : (
+              <>
+                <button className="btn btn--sm btn--primary" onClick={() => schedule(true)} title="Instagram la enseña primero a gente que no te sigue; mides las visitas antes de publicarla de verdad"><FlaskConical size={14} /> Probar como reel de prueba</button>
+                <button className="btn btn--sm" onClick={() => schedule(false)}><CalendarPlus size={14} /> Programar normal</button>
+              </>
+            )}
+            <button className="btn btn--sm" onClick={() => setChanges(true)} disabled={working}><MessageSquareText size={14} /> Pedir cambios</button>
+            {item.review !== "rejected" && <button className="btn btn--sm btn--ghost btn--danger" onClick={() => review("rejected")}>Descartar</button>}
+            <a className="btn btn--sm btn--ghost btn--icon" href={item.video.url} download={`${item.video.name}.mp4`} title="Descargar"><Download size={14} /></a>
+          </div>
+        )}
+        {item.status === "error" && (
+          <div className="ae-item__actions"><button className="btn btn--sm" onClick={async () => { await autoApi.retry(item.job_id); onChange(); }}><RotateCcw size={14} /> Volver a intentarlo</button></div>
+        )}
+      </div>
+
+      {changes && (
+        <Modal title={`Cambios en «${item.label}»`} onClose={() => setChanges(false)}
+          foot={<><span className="spacer" /><button className="btn" onClick={() => setChanges(false)}>Cancelar</button>
+            <button className="btn btn--primary" disabled={busy || notes.trim().length < 3} onClick={async () => {
+              setBusy(true);
+              try { await autoApi.changes(item.id, notes); toast("Rehaciendo esta versión con tus cambios"); setChanges(false); onChange(); }
+              catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+            }}>{busy ? <Loader2 size={15} className="spin" /> : <RotateCcw size={15} />} Rehacer</button></>}>
+          <Field label="¿Qué cambiarías?" hint="Como se lo dirías a un editor. Cada nota se aplica a todo el vídeo, no solo a un momento.">
+            <textarea className="textarea" rows={5} autoFocus value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder={"Ej.: los subtítulos más pequeños, quita el gráfico del segundo 12, la palabra clave en azul, más zooms al principio…"} />
+          </Field>
+        </Modal>
+      )}
+    </article>
+  );
+}

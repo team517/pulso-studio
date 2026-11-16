@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, Clapperboard, Film, FolderOpen, Link2 } from "lucide-react";
+import { CalendarDays, Clapperboard, Film, FolderOpen, Link2, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
 import Videos from "./pages/Videos";
 import Calendar from "./pages/Calendar";
 import Connections from "./pages/Connections";
+import AutoEdit from "./pages/AutoEdit";
 import Editor from "./editor/Editor";
 
 const NAV = [
+  { path: "/autoedicion", label: "Auto-edición", icon: Sparkles, group: "Crear" },
   { path: "/", label: "Proyectos", icon: Clapperboard, group: "Crear" },
   { path: "/biblioteca", label: "Biblioteca", icon: FolderOpen, group: "Crear" },
   { path: "/videos", label: "Vídeos exportados", icon: Film, group: "Crear" },
@@ -37,6 +39,7 @@ export default function App() {
   else if (pathname === "/videos") page = <Videos />;
   else if (pathname === "/calendario") page = <Calendar />;
   else if (pathname === "/conexiones") page = <Connections />;
+  else if (pathname === "/autoedicion") page = <AutoEdit />;
 
   let lastGroup = "";
   return (
