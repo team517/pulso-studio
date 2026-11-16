@@ -30,7 +30,7 @@ Panel ChipsFinder (/panel/studio)  ──►  nginx de ChipsFinder  ──►  s
 ## 2. ChipsFinder
 
 - Variable `STUDIO_UPSTREAM` = `http://<proyecto>_pulso-studio:4321` (nombre interno del servicio en EasyPanel).
-  Por defecto es `http://backend_pulso-studio:4321`.
+  Por defecto es `http://backend-onepulso_pulso-studio:4321` (proyecto «backend-onepulso»).
 - **Implementar**. En el menú del panel (Administración) sale **Pulso Studio**.
 
 ## 3. Tu PC
