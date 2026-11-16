@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, Clapperboard, Film, FolderOpen, Link2, Sparkles } from "lucide-react";
+import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, Link2, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
@@ -7,6 +7,7 @@ import Videos from "./pages/Videos";
 import Calendar from "./pages/Calendar";
 import Connections from "./pages/Connections";
 import AutoEdit from "./pages/AutoEdit";
+import Results from "./pages/Results";
 import Editor from "./editor/Editor";
 
 const NAV = [
@@ -15,6 +16,7 @@ const NAV = [
   { path: "/biblioteca", label: "Biblioteca", icon: FolderOpen, group: "Crear" },
   { path: "/videos", label: "Vídeos exportados", icon: Film, group: "Crear" },
   { path: "/calendario", label: "Calendario", icon: CalendarDays, group: "Publicar" },
+  { path: "/resultados", label: "Resultados", icon: BarChart3, group: "Publicar" },
   { path: "/conexiones", label: "Conexiones", icon: Link2, group: "Publicar" },
 ];
 
@@ -40,6 +42,7 @@ export default function App() {
   else if (pathname === "/calendario") page = <Calendar />;
   else if (pathname === "/conexiones") page = <Connections />;
   else if (pathname === "/autoedicion") page = <AutoEdit />;
+  else if (pathname === "/resultados") page = <Results />;
 
   let lastGroup = "";
   return (

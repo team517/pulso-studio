@@ -135,3 +135,41 @@ export const PLATFORM_INFO: Record<PlatformId, { name: string; color: string; sh
   tiktok: { name: "TikTok", color: "#25f4ee", short: "TT" },
   youtube: { name: "YouTube Shorts", color: "#ff0033", short: "YT" },
 };
+
+/* ---------- Reels de prueba y resultados ---------- */
+
+export type TrialGraduation = "MANUAL" | "SS_PERFORMANCE";
+/** Opciones de una publicación (incluye las de reel de prueba y «creado a partir de»). */
+export type PostOptions = Post["options"] & { trial?: { graduation: TrialGraduation }; promotedFrom?: string };
+
+export type InsightMetrics = {
+  views: number | null; reach: number | null; likes: number | null; comments: number | null; shares: number | null;
+  saves: number | null; interactions: number | null; avg_watch_ms: number | null;
+};
+export type InsightPlatform = {
+  platform: PlatformId;
+  status: "ok" | "pending" | "error" | "stale" | "unavailable" | "not_published";
+  url: string | null; mediaId: string | null; publishedAt: string | null; latest: InsightMetrics | null;
+  history: { at: string; views: number | null; likes: number | null; reach: number | null }[];
+  checkedAt: string | null; okAt: string | null; error: string | null;
+};
+export type InsightItem = {
+  id: string; title: string; caption: string; export_id: string; status: Post["status"]; publishedAt: string;
+  video: { id: string; name: string; url: string | null; thumbUrl: string | null; duration: number | null } | null;
+  trial: TrialGraduation | null; promotedFrom: string | null;
+  promotedTo: { id: string; status: Post["status"]; scheduled_at: string; url: string | null }[];
+  platforms: InsightPlatform[];
+  totals: { views: number | null; reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null };
+  winner: boolean; trialViews: number | null;
+};
+export type InsightsList = {
+  items: InsightItem[]; running: boolean; lastRunAt: string | null;
+  rule: { factor: number; minOthers: number; minViewsIfFew: number };
+  platformErrors: Partial<Record<PlatformId, string>>;
+};
+
+export const insightsApi = {
+  list: () => req<InsightsList>("GET", "/api/insights"),
+  refreshAll: () => req<{ started: boolean; running: boolean }>("POST", "/api/insights/refresh"),
+  refreshPost: (id: string) => req<{ ok: boolean; item: InsightItem | null }>("POST", `/api/insights/${id}/refresh`),
+};

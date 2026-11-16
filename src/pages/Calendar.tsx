@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, Film, Loader2, Plus, Send, Trash2, XCircle } from "lucide-react";
-import { api, PLATFORM_INFO, fmtTime, type ExportJob, type PlatformId, type PlatformStatus, type Post } from "../api";
-import { Field, Modal, navigate, usePath, useToast } from "../ui";
+import { takePrefill, type Prefill } from "../autoedit-api";
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, Film, FlaskConical, Loader2, Plus, Send, Trash2, XCircle } from "lucide-react";
+import { api, PLATFORM_INFO, fmtTime, type ExportJob, type PlatformId, type PlatformStatus, type Post, type PostOptions, type TrialGraduation } from "../api";
+import { Field, Modal, Switch, navigate, usePath, useToast } from "../ui";
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const PLATFORMS: PlatformId[] = ["instagram", "tiktok", "youtube"];
@@ -25,6 +26,19 @@ export function PlatformBadge({ p, size = 22 }: { p: PlatformId; size?: number }
   return <span className="pf-badge" style={{ width: size, height: size, background: i.color, fontSize: size * 0.42 }} title={i.name}>{i.short}</span>;
 }
 
+/** Reel de prueba de Instagram (solo lo ven quienes no te siguen). */
+export const trialOf = (p: Pick<Post, "options" | "platforms">): TrialGraduation | null =>
+  p.platforms.includes("instagram") ? (p.options as PostOptions | undefined)?.trial?.graduation ?? null : null;
+
+export function TrialBadge({ small }: { small?: boolean }) {
+  return (
+    <span className="pill pill--info" title="Reel de prueba: Instagram solo se lo enseña a quienes no te siguen"
+      style={small ? { height: 16, padding: "0 5px", fontSize: 10, gap: 3, flex: "none" } : { flex: "none" }}>
+      <FlaskConical size={small ? 10 : 12} /> Prueba
+    </span>
+  );
+}
+
 export default function Calendar() {
   const toast = useToast();
   const [path] = usePath();
@@ -32,7 +46,7 @@ export default function Calendar() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [exports, setExports] = useState<ExportJob[]>([]);
   const [platforms, setPlatforms] = useState<PlatformStatus[]>([]);
-  const [editing, setEditing] = useState<{ post: Post | null; date: Date; exportId?: string } | null>(null);
+  const [editing, setEditing] = useState<{ post: Post | null; date: Date; exportId?: string; prefill?: Prefill | null } | null>(null);
 
   // Rejilla de 6 semanas empezando en lunes
   const gridStart = useMemo(() => {
@@ -65,7 +79,8 @@ export default function Calendar() {
     const nuevo = q.get("nuevo");
     if (nuevo) {
       const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0);
-      setEditing({ post: null, date: d, exportId: nuevo });
+      const pf = takePrefill();
+      setEditing({ post: null, date: d, exportId: nuevo, prefill: pf && pf.exportId === nuevo ? pf : null });
       navigate("/calendario", true);
     }
   }, [path]);
@@ -115,6 +130,7 @@ export default function Calendar() {
                     <button key={p.id} className={"cal-post cal-post--" + p.status} onClick={() => setEditing({ post: p, date: new Date(p.scheduled_at) })}>
                       <span className="cal-post__time mono">{hhmm(p.scheduled_at)}</span>
                       <span className="cal-post__pf">{p.platforms.map((x) => <PlatformBadge key={x} p={x} size={14} />)}</span>
+                      {trialOf(p) && <TrialBadge small />}
                       <span className="cal-post__name">{p.video?.name ?? "Vídeo borrado"}</span>
                     </button>
                   ))}
@@ -132,7 +148,7 @@ export default function Calendar() {
               <span className="up-item__text">
                 <b>{p.video?.name ?? "Vídeo borrado"}</b>
                 <small>{new Date(p.scheduled_at).toLocaleString("es-ES", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</small>
-                <span className="row" style={{ gap: 4 }}>{p.platforms.map((x) => <PlatformBadge key={x} p={x} size={16} />)}</span>
+                <span className="row" style={{ gap: 4 }}>{p.platforms.map((x) => <PlatformBadge key={x} p={x} size={16} />)}{trialOf(p) && <TrialBadge small />}</span>
               </span>
             </button>
           ))}
@@ -145,25 +161,28 @@ export default function Calendar() {
       </div>
 
       {editing && (
-        <PostModal post={editing.post} date={editing.date} exportId={editing.exportId} exports={exports} platforms={platforms}
+        <PostModal post={editing.post} date={editing.date} exportId={editing.exportId} prefill={editing.prefill} exports={exports} platforms={platforms}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
       )}
     </div>
   );
 }
 
-function PostModal({ post, date, exportId, exports, platforms, onClose, onSaved }: {
-  post: Post | null; date: Date; exportId?: string; exports: ExportJob[]; platforms: PlatformStatus[]; onClose: () => void; onSaved: () => void;
+function PostModal({ post, date, exportId, prefill, exports, platforms, onClose, onSaved }: {
+  post: Post | null; date: Date; exportId?: string; prefill?: Prefill | null; exports: ExportJob[]; platforms: PlatformStatus[]; onClose: () => void; onSaved: () => void;
 }) {
   const toast = useToast();
   const [videoId, setVideoId] = useState(post?.export_id ?? exportId ?? exports[0]?.id ?? "");
-  const [nets, setNets] = useState<PlatformId[]>(post?.platforms ?? PLATFORMS.filter((p) => platforms.find((x) => x.id === p)?.connected));
-  const [title, setTitle] = useState(post?.title ?? "");
-  const [caption, setCaption] = useState(post?.caption ?? "");
+  const [nets, setNets] = useState<PlatformId[]>(post?.platforms ?? (prefill?.trial ? ["instagram"] : PLATFORMS.filter((p) => platforms.find((x) => x.id === p)?.connected)));
+  const [title, setTitle] = useState(post?.title ?? prefill?.title ?? "");
+  const [caption, setCaption] = useState(post?.caption ?? prefill?.caption ?? "");
   const [day, setDay] = useState(dateInput(date));
   const [hour, setHour] = useState(timeInput(date));
   const [ytPrivacy, setYtPrivacy] = useState(post?.options.youtubePrivacy ?? platforms.find((p) => p.id === "youtube")?.privacy ?? "public");
   const [ttPrivacy, setTtPrivacy] = useState(post?.options.tiktokPrivacy ?? platforms.find((p) => p.id === "tiktok")?.privacy ?? "SELF_ONLY");
+  const prevOptions = (post?.options ?? {}) as PostOptions;
+  const [trial, setTrial] = useState(!!prevOptions.trial || (!post && !!prefill?.trial));
+  const [graduation, setGraduation] = useState<TrialGraduation>(prevOptions.trial?.graduation ?? "MANUAL");
   const [busy, setBusy] = useState(false);
   const [askDel, setAskDel] = useState(false);
   const locked = post?.status === "publishing";
@@ -179,7 +198,10 @@ function PostModal({ post, date, exportId, exports, platforms, onClose, onSaved 
     if (Number.isNaN(when.getTime())) return toast("Fecha u hora no válida.", "bad");
     setBusy(true);
     try {
-      const body = { export_id: videoId, platforms: nets, title, caption, scheduled_at: (publishNow ? new Date() : when).toISOString(), options: { youtubePrivacy: ytPrivacy, tiktokPrivacy: ttPrivacy } };
+      // Se conservan las demás opciones (p. ej. «creado a partir de un reel de prueba»)
+      const { trial: _oldTrial, ...keep } = prevOptions;
+      const options: PostOptions = { ...keep, youtubePrivacy: ytPrivacy, tiktokPrivacy: ttPrivacy, ...(trial && nets.includes("instagram") ? { trial: { graduation } } : {}) };
+      const body = { export_id: videoId, platforms: nets, title, caption, scheduled_at: (publishNow ? new Date() : when).toISOString(), options };
       const saved = post ? await api.updatePost(post.id, body) : await api.createPost(body);
       if (publishNow) { await api.publishNow(saved.id); toast("Publicando ahora…", "info"); }
       else toast(post ? "Publicación actualizada" : `Programada para el ${when.toLocaleString("es-ES", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`);
@@ -203,7 +225,7 @@ function PostModal({ post, date, exportId, exports, platforms, onClose, onSaved 
       }>
       {post && post.status !== "scheduled" && (
         <div className="pf-results">
-          <span className={"pill " + STATUS[post.status].cls}>{STATUS[post.status].label}</span>
+          <span className="row" style={{ gap: 6 }}><span className={"pill " + STATUS[post.status].cls}>{STATUS[post.status].label}</span>{trialOf(post) && <TrialBadge />}</span>
           {post.platforms.map((p) => {
             const r = post.results[p];
             return (
@@ -268,6 +290,24 @@ function PostModal({ post, date, exportId, exports, platforms, onClose, onSaved 
             <Field label="Hora"><input className="input" type="time" value={hour} onChange={(e) => setHour(e.target.value)} disabled={locked} /></Field>
           </div>
           {when < new Date() && !post && <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>Esa hora ya ha pasado: se publicará en cuanto lo guardes.</p>}
+          {nets.includes("instagram") && !done && !locked && (
+            <div className="note" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Switch checked={trial} onChange={setTrial} label={<span>Publicar como reel de prueba <span className="muted">(solo lo ven quienes no te siguen)</span></span>} />
+              {trial && (
+                <>
+                  <Field label="Si funciona bien">
+                    <select className="select select--sm" value={graduation} onChange={(e) => setGraduation(e.target.value as TrialGraduation)}>
+                      <option value="MANUAL">Lo paso yo a normal desde la app de Instagram</option>
+                      <option value="SS_PERFORMANCE">Que Instagram lo comparta solo con mis seguidores</option>
+                    </select>
+                  </Field>
+                  <span className="muted" style={{ fontSize: 12.5 }}>
+                    Sirve para probar un vídeo sin que lo vean tus seguidores. Solo afecta a Instagram (TikTok y YouTube lo publican normal). Sus cifras salen en <b>Resultados</b>.
+                  </span>
+                </>
+              )}
+            </div>
+          )}
           {(nets.includes("youtube") || nets.includes("tiktok")) && (
             <div className="grid2">
               {nets.includes("youtube") && (

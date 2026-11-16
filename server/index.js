@@ -10,6 +10,7 @@ import { createExport } from "./render.js";
 import { PORT, PLATFORMS, status as platformStatus, configure, disconnect, authUrl, handleCallback, publicUrl, checkInstagram, getConf } from "./platforms.js";
 import { startScheduler, runPost } from "./scheduler.js";
 import { registerAutoeditRoutes } from "./autoedit/routes.js";
+import { registerInsightsRoutes, startInsightsPoller } from "./insights.js";
 
 const app = express();
 app.use(express.json({ limit: "20mb" }));
@@ -297,6 +298,10 @@ app.get("/api/auth/:p/callback", async (req, res) => {
 
 registerAutoeditRoutes(app, wrap);
 
+/* ---------- Resultados (visitas de cada publicación) ---------- */
+
+registerInsightsRoutes(app);
+
 /* ---------- Web (versión compilada) ---------- */
 
 const dist = join(process.cwd(), "dist");
@@ -308,4 +313,5 @@ if (existsSync(dist)) {
 app.listen(PORT, () => {
   console.log(`Pulso Studio · servidor en http://localhost:${PORT} · redes: ${publicUrl()}`);
   startScheduler();
+  startInsightsPoller();
 });

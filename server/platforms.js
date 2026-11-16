@@ -108,7 +108,7 @@ export async function handleCallback(p, code) {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_key: c.clientId, client_secret: c.clientSecret, code, grant_type: "authorization_code", redirect_uri: redirectUri(p) }),
     }), "TikTok");
-    c.tokens = { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: Date.now() + (t.expires_in - 60) * 1000, open_id: t.open_id };
+    c.tokens = { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: Date.now() + (t.expires_in - 60) * 1000, open_id: t.open_id, scope: t.scope ?? null };
     saveConf(p, c);
     const u = await asJson(await fetch("https://open.tiktokapis.com/v2/user/info/?fields=display_name", { headers: { authorization: "Bearer " + t.access_token } }), "TikTok");
     c.account = { id: t.open_id, name: u.data?.user?.display_name ?? "Cuenta de TikTok" };
@@ -117,7 +117,7 @@ export async function handleCallback(p, code) {
   saveConf(p, c);
 }
 
-async function accessToken(p) {
+export async function accessToken(p) {
   const c = getConf(p);
   if (!c.tokens) throw new Error("La cuenta no está conectada.");
   if (c.tokens.expires_at && Date.now() < c.tokens.expires_at) return c.tokens.access_token;
@@ -189,7 +189,8 @@ async function publishTikTok(post, file) {
     await sleep(5000);
     const s = await asJson(await fetch("https://open.tiktokapis.com/v2/post/publish/status/fetch/", { method: "POST", headers: auth, body: JSON.stringify({ publish_id }) }), "TikTok");
     const st = s.data?.status;
-    if (st === "PUBLISH_COMPLETE") return { id: publish_id, url: s.data?.publicaly_available_post_id?.[0] ? `https://www.tiktok.com/video/${s.data.publicaly_available_post_id[0]}` : null };
+    const videoId = s.data?.publicaly_available_post_id?.[0] ? String(s.data.publicaly_available_post_id[0]) : null;
+    if (st === "PUBLISH_COMPLETE") return { id: publish_id, videoId, url: videoId ? `https://www.tiktok.com/video/${videoId}` : null };
     if (st === "SEND_TO_USER_INBOX") return { id: publish_id, url: null, note: "Enviado a tu bandeja de TikTok para terminar de publicarlo." };
     if (st === "FAILED") throw new Error("TikTok rechazó el vídeo: " + (s.data?.fail_reason || "sin motivo"));
   }
@@ -268,11 +269,29 @@ async function instagramConf() {
   return c;
 }
 
+/** Servidor y token de Instagram para leer estadísticas (sin exponer el token fuera del servidor). */
+export async function instagramAuth() {
+  const c = await instagramConf();
+  return { host: c.mode === "instagram" ? IG : FB, token: c.accessToken, mode: c.mode };
+}
+
+/** Reel de prueba: solo lo ven quienes no te siguen. MANUAL = lo pasas tú a normal en la app;
+ *  SS_PERFORMANCE = Instagram lo comparte con tus seguidores si funciona bien. */
+export const TRIAL_GRADUATIONS = ["MANUAL", "SS_PERFORMANCE"];
+export const trialGraduation = (post) => {
+  const g = post?.options?.trial?.graduation;
+  return TRIAL_GRADUATIONS.includes(g) ? g : null;
+};
+
 async function publishInstagram(post, file) {
   const c = await instagramConf();
   const host = c.mode === "instagram" ? IG : FB;
   const tk = tq(c.accessToken);
-  const body = { media_type: "REELS", caption: post.caption || "", share_to_feed: true };
+  const trial = trialGraduation(post);
+  const body = { media_type: "REELS", caption: post.caption || "" };
+  // Un reel de prueba no se comparte en el feed de los seguidores; uno normal, sí
+  if (trial) body.trial_params = { graduation_strategy: trial };
+  else body.share_to_feed = true;
   if (c.mode === "instagram") {
     const pub = publicUrl();
     if (!/^https:\/\//.test(pub)) throw new Error("Con el token de Instagram, Meta necesita un enlace público al vídeo: pon la «Dirección pública» en Conexiones (o conecta con Facebook).");
@@ -300,7 +319,7 @@ async function publishInstagram(post, file) {
   }
   const pub = await asJson(await fetch(`${host}/${c.account.id}/media_publish?creation_id=${cont.id}&${tk}`, { method: "POST" }), "Instagram");
   const info = await fetch(`${host}/${pub.id}?fields=permalink&${tk}`).then((r) => r.json()).catch(() => ({}));
-  return { id: pub.id, url: info.permalink ?? null };
+  return { id: pub.id, url: info.permalink ?? null, ...(trial ? { trial } : {}) };
 }
 
 /** Comprueba que la conexión de Instagram sigue funcionando (sin publicar nada). */

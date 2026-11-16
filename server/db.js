@@ -58,3 +58,18 @@ export const getSetting = (key, def = null) => {
 };
 export const setSetting = (key, value) =>
   db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, JSON.stringify(value));
+
+// Resultados de las publicaciones: una foto ("snapshot") cada vez que se consultan las estadísticas,
+// para poder ver cómo crecen. Y el estado de la última consulta por publicación y red.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, post_id TEXT NOT NULL, platform TEXT NOT NULL, media_id TEXT,
+    fetched_at TEXT NOT NULL, views INTEGER, reach INTEGER, likes INTEGER, comments INTEGER, shares INTEGER,
+    saves INTEGER, interactions INTEGER, avg_watch_ms INTEGER, raw TEXT
+  );
+  CREATE INDEX IF NOT EXISTS post_insights_post ON post_insights (post_id, platform, fetched_at);
+  CREATE TABLE IF NOT EXISTS post_insights_state (
+    post_id TEXT NOT NULL, platform TEXT NOT NULL, media_id TEXT, status TEXT NOT NULL,
+    error TEXT, last_try_at TEXT, last_ok_at TEXT, PRIMARY KEY (post_id, platform)
+  );
+`);

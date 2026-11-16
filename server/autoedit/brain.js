@@ -1,14 +1,46 @@
 // El «cerebro» de la auto-edición: Claude Code en modo no interactivo (`claude -p`), con la sesión del usuario.
 // Si no hay sesión iniciada, quien llama usa las reglas fijas (plan.js) y se avisa en la interfaz.
 import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 export class NeedLogin extends Error {
   constructor() { super("Claude no tiene la sesión iniciada en este ordenador. Abre una terminal, escribe «claude» y luego /login."); }
 }
 
+/**
+ * Qué `claude` usar: STUDIO_CLAUDE_BIN si está; si no, la versión más nueva que trae la app de escritorio
+ * (la de npm puede ser antigua y no leer la sesión); si no, la del PATH.
+ */
+function claudeBin() {
+  if (process.env.STUDIO_CLAUDE_BIN && existsSync(process.env.STUDIO_CLAUDE_BIN)) return process.env.STUDIO_CLAUDE_BIN;
+  const base = join(process.env.LOCALAPPDATA || "", "Claude-Data");
+  const found = [];
+  try {
+    for (const a of readdirSync(base)) {
+      const cc = join(base, a, "claude-code");
+      if (!existsSync(cc)) continue;
+      for (const ver of readdirSync(cc)) for (const h of readdirSync(join(cc, ver))) {
+        const exe = join(cc, ver, h, "claude.exe");
+        if (existsSync(exe)) found.push({ exe, ver: ver.split(".").map(Number) });
+      }
+    }
+  } catch { /* sin app de escritorio */ }
+  found.sort((x, y) => { for (let i = 0; i < 3; i++) if ((x.ver[i] || 0) !== (y.ver[i] || 0)) return (y.ver[i] || 0) - (x.ver[i] || 0); return 0; });
+  return found[0]?.exe || "claude";
+}
+
+/** Entorno limpio: sin las variables internas de la app de escritorio (harían que Claude busque otra sesión). */
+function cleanEnv() {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!/^(CLAUDE|CLAUDECODE|ANTHROPIC_)/i.test(k)) env[k] = v;
+  return env;
+}
+
 function runClaude(args, input, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const p = spawn("claude", args, { windowsHide: true, shell: true });
+    const bin = claudeBin();
+    const p = spawn(bin === "claude" ? "claude" : `"${bin}"`, args, { windowsHide: true, shell: true, env: cleanEnv() });
     const out = [], err = [];
     const timer = setTimeout(() => { p.kill(); reject(new Error("Claude tardó demasiado en responder.")); }, timeoutMs);
     p.stdout.on("data", (d) => out.push(d));
