@@ -22,7 +22,7 @@ function cropY(frame, at) {
   return Math.min(1, Math.max(0, (SRC.faceY * s - frame.h * at) / extra));
 }
 
-const ALL = ["card", "checklist", "strike", "stat", "days", "compare", "chart", "behind", "scene", "icons", "custom"];
+const ALL = ["card", "checklist", "strike", "stat", "days", "compare", "chart", "behind", "scene", "icons", "custom", "motion"];
 
 // maxZoom: tope de zoom del estilo (motion.zoomMax); con más zoom la barbilla baja y las tarjetas empiezan más abajo
 export function layoutGeometry(layout, W, H, maxZoom = MAX_ZOOM) {

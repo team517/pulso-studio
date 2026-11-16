@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SLOT_BUILDERS, SPRING, graphicsCss, buildScene, bigWordSize } from "./graphics.js";
+import { motionCss, motionTweens } from "../../motion-design.js";
 import { buildCaptions } from "./captions.js";
 import { esc, fitWrap, r2, r3, rgba, clamp } from "./text.js";
 import { MAX_ZOOM } from "./layouts.js";
@@ -109,9 +110,9 @@ export function planGraphics(input, geo, hasMatte) {
     .map((g) => ({ ...g, start: clamp(+g.start || 0, 0, D), end: clamp(+g.end || 0, 0, D) }))
     .filter((g) => g.end - g.start >= 0.5)
     .sort((a, b) => a.start - b.start);
-  const scenes = ok.filter((g) => g.type === "scene");
+  const scenes = ok.filter((g) => g.type === "scene" || (g.type === "motion" && g.design));
   const behind = ok.filter((g) => g.type === "behind");
-  let slot = ok.filter((g) => g.type !== "scene" && g.type !== "behind");
+  let slot = ok.filter((g) => g.type !== "scene" && g.type !== "behind" && g.type !== "motion");
   // sin mate y sin hueco encima de la cabeza (horizontal): la palabra va al panel como un gráfico más
   if (!hasMatte && !geo.overlayWord) slot = [...slot, ...behind.map((g) => ({ ...g, type: "word" }))].sort((a, b) => a.start - b.start);
   // nada de tarjetas durante una escena a pantalla completa
@@ -335,7 +336,17 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
   plan.scenes.forEach((g, i) => {
     const id = `s${i}`;
     const ctx = { id, s: g.start, e: g.end, theme, js: (l) => gjs.push(l), css: (l) => gcss.push(l), sfx: addSfx };
-    const html = buildScene(g, ctx, geo);
+    let html;
+    if (g.type === "motion") {
+      // Animación diseñada a medida (Claude): su HTML+CSS en una caja del tamaño del vídeo y sus movimientos
+      if (!gcss.some((l) => l.includes("--f-title"))) gcss.push(`#gfx-root { --f-title: ${S().fonts.title.css}; --f-keyword: ${S().fonts.keyword.css}; --f-caption: ${S().fonts.caption.css}; --accent: ${theme.accent}; --accent2: ${theme.accent2}; --gold: ${theme.gold}; }`);
+      gcss.push(motionCss(g.design, id).replace(/\n/g, " "));
+      html = `<div class="mwrap">${g.design.html}</div>`;
+      gjs.push(`gtl.fromTo("#${id} .mwrap", { opacity: 0 }, { opacity: 1, duration: 0.18, ease: "power2.out" }, ${r3(g.start)});`);
+      motionTweens(g.design, id, g.start).forEach((l) => gjs.push(l));
+      if (g.end < D - 0.05) gjs.push(`gtl.fromTo("#${id} .mwrap", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.in", immediateRender: false }, ${r3(g.end - 0.22)});`);
+      addSfx(g.start - 0.03, "whoosh");
+    } else html = buildScene(g, ctx, geo);
     gbody.push(`        <div id="${id}" class="fs clip" data-layout-allow-occlusion data-start="${r3(g.start)}" data-duration="${r3(g.end - g.start)}" data-track-index="3">${html}</div>`);
   });
 

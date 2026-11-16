@@ -60,7 +60,7 @@ export function scopedCss(t) {
 
 /* ---------- Foto de la plantilla con el navegador del render ---------- */
 
-function chromePath() {
+export function chromePath() {
   if (process.env.STUDIO_CHROME && existsSync(process.env.STUDIO_CHROME)) return process.env.STUDIO_CHROME;
   const base = join(homedir(), ".cache", "hyperframes", "chrome", "chrome-headless-shell");
   try {
@@ -84,7 +84,7 @@ export async function snapTemplates(items, vars = {}) {
   const exe = chromePath();
   if (!exe || !items.length) return 0;
   const { default: puppeteer } = await import("puppeteer-core");
-  const browser = await puppeteer.launch({ executablePath: exe, headless: true, args: ["--no-sandbox", "--disable-gpu", "--force-color-profile=srgb"] });
+  const browser = await puppeteer.launch({ executablePath: exe, headless: true, protocolTimeout: 180000, args: ["--no-sandbox", "--disable-gpu", "--force-color-profile=srgb"] });
   let n = 0;
   try {
     const page = await browser.newPage();
@@ -101,7 +101,7 @@ export async function snapTemplates(items, vars = {}) {
         ${scopedCss(t)}
       </style></head><body><div class="tpl-${t.id}">${fillTemplate(t, {}, t.icon)}</div></body></html>`;
       await page.setContent(html, { waitUntil: "load", timeout: 15000 });
-      await page.evaluate(() => document.fonts?.ready);
+      await page.evaluate(() => Promise.race([document.fonts?.ready, new Promise((r) => setTimeout(r, 3000))]));
       await page.screenshot({ path: out, type: "png" });
       n++;
     }

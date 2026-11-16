@@ -77,6 +77,7 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 - compare: {"type":"compare","from":i,"to":j,"left":{"icon":"doc","label":"Bajo contrato"},"right":{"icon":"money","label":"No pagas","bad":true}}
 - chart: {"type":"chart","from":i,"to":j,"title":"30 reuniones / mes","points":[2,5,4,9,14,22,30]}
 - icons: {"type":"icons","from":i,"to":j,"items":[{"icon":"gear","label":"Automatiza","at":k},...]}   (2-4)
+- motion: {"type":"motion","from":i,"to":j,"brief":"qué cuenta la animación (1-2 frases, con lo que dice la persona)","texts":["2-5 textos cortos que salen"]}   (ANIMACIÓN A PANTALLA COMPLETA diseñada a medida por un motion designer, tapa a la persona 3-6 s: la mejor herramienta para explicar un proceso, una lista, una cifra o un antes/después; pon 1-2 por vídeo en los momentos explicativos, separadas)
 - scene: {"type":"scene","from":i,"to":j,"kicker":"ASÍ FUNCIONA","title":"Tu sistema","steps":[{"icon":"target","label":"Buscamos clientes","at":k},...]}   (pantalla completa, 2-4 pasos; tapa a la persona: úsala 1 vez en un tramo explicativo de 4-8 s)`;
 
 export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "", angle = "", hook = "" } = {}) {
@@ -294,7 +295,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
   const seenType = new Set();
   const chunkText = (g) => words.slice(g.from, Math.min(words.length, g.to + 1)).map((w) => w.w).join(" ").toLowerCase();
   const pick = noGraphics ? [] : plan.graphics.filter((g) => g.layouts.includes(variant.layout)).filter((g) => {
-    if (copied && g.type !== "custom") return false;
+    if (copied && g.type !== "custom" && g.type !== "motion") return false;
     if (g.type === "custom" && !tpls.some((t) => t.id === g.tpl)) return false;
     if (g.type === "scene" && style?.graphics !== "many") return false;
     const key = g.type === "custom" ? "custom:" + g.tpl : g.type;
@@ -325,7 +326,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
     }
     graphics.sort((a, b) => a.start - b.start);
   }
-  const hide = graphics.filter((g) => g.type === "scene" || g.type === "behind").map((g) => [g.start, g.end]);
+  const hide = graphics.filter((g) => g.type === "scene" || g.type === "behind" || g.type === "motion").map((g) => [g.start, g.end]);
   const zoomK = variant.layout === "minimal" ? 1.5 : 1;
   const zs = style?.motion?.zoomStyle;
   const zMax = Math.min(1.25, Math.max(1, Number(style?.motion?.zoomMax) || 1.1));

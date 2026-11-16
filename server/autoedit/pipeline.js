@@ -120,6 +120,34 @@ async function prepareSource(job, work) {
  * ¿El vídeo ya trae textos quemados (subtítulos de otra edición, rótulos)? Claude mira 6 fotogramas; si los hay,
  * esa franja se difumina para que no choque con los subtítulos nuevos, y se avisa.
  */
+/** Animaciones a pantalla completa del plan: Claude las diseña (y revisa con fotos) una vez por trabajo. */
+async function designMotions(job, plan, words, work, persist = true) {
+  const todo = (plan.graphics || []).filter((g) => g.type === "motion" && !g.design);
+  if (!todo.length) return plan;
+  const { designMotion } = await import("../motion-design.js");
+  const { chromePath } = await import("../gfx-template.js");
+  const st = getStyle();
+  const theme = { accent: st.colors?.accent || "#2F8BFF", accent2: st.colors?.accent2 || "#6E58F1", gold: st.colors?.keyword || "#F2C84B", bg: st.colors?.bg || "#070B1A" };
+  const sampleCss = (Array.isArray(st.templates) ? st.templates : []).slice(0, 3).map((t) => `${t.name}: ${t.css.slice(0, 600)}`).join("\n");
+  for (const [k, g] of todo.entries()) {
+    setJob(job.id, { step: `Diseñando la animación ${k + 1} de ${todo.length} (pantalla completa)` });
+    const from = Math.max(0, g.from | 0), to = Math.min(words.length - 1, Math.max(from, g.to | 0));
+    const dur = Math.min(7, Math.max(2.5, words[to].end - words[from].start + 0.6));
+    try {
+      g.design = await designMotion({
+        brief: String(g.brief || "").slice(0, 400), texts: (Array.isArray(g.texts) ? g.texts : []).map(String).slice(0, 6), dur,
+        words: words.slice(from, to + 1).map((w) => w.w).join(" "),
+        style: { ...theme, notes: String(st.aiNotes || "").slice(0, 600), sampleCss },
+        vars: { fTitle: '"Inter", "Segoe UI", sans-serif', fKeyword: '"Anton", "Impact", sans-serif', ...theme },
+        dir: join(work, "motion", String(k + 1)), askClaude, chromePath: chromePath(),
+      });
+    } catch (e) { if (e instanceof NeedLogin) throw e; console.warn("[autoedit] animación:", e.message); }
+  }
+  plan.graphics = plan.graphics.filter((g) => g.type !== "motion" || g.design);
+  if (persist) setJob(job.id, { plan });
+  return plan;
+}
+
 export async function maskBurnedText(job, work) {
   const flag = join(work, "burned.json");
   if (existsSync(flag)) return readJson(flag);
@@ -420,6 +448,7 @@ export async function runJob(id) {
     plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: styleNotesForAI() });
     setJob(id, { plan, brain: plan.brain });
   }
+  plan = await designMotions(job, plan, words.words, src);
   const variants = VARIANTS.filter((v) => opts.variants.includes(v.key));
   // Color del estilo (p. ej. cine) también en las versiones
   const grade = getStyle().grade;
@@ -494,6 +523,10 @@ async function runShorts(job, { src, raw, info, useClaude }) {
         setItem(it.id, { step: "Planificando la edición", progress: 0.05 });
         plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: styleNotesForAI(), angle: it.short.angle, hook: it.short.hook });
         setItem(it.id, { post: { plan } });
+      }
+      if (plan.graphics?.some((g) => g.type === "motion" && !g.design)) {
+        plan = await designMotions(job, plan, words.words, work, false);
+        setItem(it.id, { post: { ...(it.post || {}), plan } });
       }
       setItem(it.id, { step: `Plano y color: ${FRAMINGS[look.framing]?.label}, ${GRADES[look.grade]?.label}`, progress: 0.06 });
       await buildBase(work, look);
