@@ -164,6 +164,9 @@ export function registerWorkerRoutes(app, wrap) {
         const cols = new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name));
         for (const r of tables[t]) {
           if (t === "settings" && SKIP_SETTING.test(String(r.key))) continue;
+          // Si ya lo volviste a subir tú (mismo nombre), no se duplica
+          if (t === "style_assets" && db.prepare("SELECT 1 FROM style_assets WHERE kind = ? AND name = ? AND id != ?").get(r.kind, r.name, r.id)) continue;
+          if (t === "media" && db.prepare("SELECT 1 FROM media WHERE name = ? AND size IS ? AND id != ?").get(r.name, r.size ?? null, r.id)) continue;
           const keys = Object.keys(r).filter((k) => cols.has(k) && !(t === "post_insights" && k === "id"));
           if (!keys.length) continue;
           // Tu estilo vuelve salvo que ya hayas montado otro en el servidor nuevo
