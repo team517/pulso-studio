@@ -1,6 +1,6 @@
 // Rutas de la auto-edición.
 import { createJob, jobView, listJobs, editedLibrary, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick } from "./pipeline.js";
-import { aiProvider } from "./brain.js";
+import { aiProvider, resetClaudeCheck } from "./brain.js";
 
 export function registerAutoeditRoutes(app, wrap) {
   app.get("/api/autoedit/info", wrap(async (req, res) => {
@@ -8,6 +8,8 @@ export function registerAutoeditRoutes(app, wrap) {
     res.json({ claude: !!provider, provider, variants: VARIANTS.map((v) => ({ key: v.key, label: v.label, layout: v.layout, width: v.width, height: v.height })) });
   }));
   app.get("/api/autoedit/jobs", wrap((req, res) => res.json(listJobs())));
+  // Volver a comprobar ya la sesión de Claude (tras iniciar sesión)
+  app.post("/api/autoedit/recheck", wrap(async (req, res) => { resetClaudeCheck(); res.json({ provider: await aiProvider() }); }));
   app.get("/api/autoedit/library", wrap((req, res) => res.json(editedLibrary())));
   app.post("/api/autoedit/jobs", wrap((req, res) => {
     const id = createJob(String(req.body.mediaId || ""), req.body || {});

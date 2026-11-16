@@ -64,7 +64,7 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 - icons: {"type":"icons","from":i,"to":j,"items":[{"icon":"gear","label":"Automatiza","at":k},...]}   (2-4)
 - scene: {"type":"scene","from":i,"to":j,"kicker":"ASÍ FUNCIONA","title":"Tu sistema","steps":[{"icon":"target","label":"Buscamos clientes","at":k},...]}   (pantalla completa, 2-4 pasos; tapa a la persona: úsala 1 vez en un tramo explicativo de 4-8 s)`;
 
-export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "" } = {}) {
+export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "", angle = "", hook = "" } = {}) {
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
     try {
@@ -83,7 +83,7 @@ Devuelve el plan de edición. Reglas:
 ${styleNotes ? `ESTILO DEL USUARIO (manda sobre lo demás):
 ${styleNotes}
 
-` : ""}6. "post": texto para publicar (2-4 líneas que inviten a ver el vídeo, en español, y 3-5 hashtags al final) y "youtubeTitle" (máx. 70 caracteres).${isShort ? "\n7. Es un short sacado de un vídeo más largo: el gancho tiene que funcionar sin contexto." : ""}
+` : ""}6. "post": texto para publicar (2-4 líneas que inviten a ver el vídeo, en español, y 3-5 hashtags al final) y "youtubeTitle" (máx. 70 caracteres).${isShort ? "\n7. Es un short sacado de un vídeo más largo: el gancho tiene que funcionar sin contexto." + (angle ? " Su ángulo es «" + angle + "»: que los gráficos y el titular lo refuercen." : "") + (hook ? " Titular de gancho propuesto: «" + hook + "» (úsalo en hook.title salvo que tengas uno mejor)." : "") : ""}
 
 ${GRAPHIC_HELP}
 
@@ -309,17 +309,31 @@ export async function pickShorts(words, { count = 3, vocab = "", useClaude = tru
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
     try {
-      const r = await askClaude(`Eres editor de shorts virales en español. De esta transcripción de un vídeo largo (${(duration / 60).toFixed(1)} min), elige los ${count} mejores momentos para convertirlos en shorts de 25-60 s cada uno: que empiecen con un gancho fuerte, se entiendan sin contexto y cierren una idea completa. Pueden ser un tramo seguido o 2-3 tramos que se unen bien.${vocab ? `\nVocabulario: ${vocab}` : ""}
+      const r = await askClaude(`Eres editor de shorts virales en español. De esta transcripción de un vídeo largo (${(duration / 60).toFixed(1)} min), saca ${count} shorts de 25-60 s cada uno que NO PAREZCAN EL MISMO VÍDEO:
+- Cada short trata una idea distinta (nada de dos shorts sobre lo mismo) y tiene un ÁNGULO distinto: consejo práctico, historia/caso real, error común, lista de pasos, dato sorprendente, opinión polémica, pregunta al público, antes/después, mito vs realidad.
+- Empieza con un gancho fuerte en la primera frase (si la mejor frase de gancho está más adelante, puedes empezar el short por ella y seguir con el resto: usa varios tramos).
+- Se entiende sin contexto y cierra una idea completa.
+- Puede ser un tramo seguido o 2-3 tramos que se unen bien. Sin solaparse entre shorts.${count > 10 ? "\n- Tienes que sacar muchos: aprovecha todo el vídeo, pero solo momentos que se sostengan solos." : ""}${vocab ? `\nVocabulario: ${vocab}` : ""}
 
 PALABRAS (índice, segundo, palabra):
 ${wordList(words)}
 
-Responde SOLO con JSON: {"shorts":[{"title":"titular del short (máx. 6 palabras)","why":"por qué funciona (1 frase)","ranges":[[desde,hasta]]}]}
-(desde/hasta = índices de palabra incluidos; que cada short sume 25-60 s; sin solaparse entre shorts.)`);
+Responde SOLO con JSON:
+{"shorts":[{"title":"titular del short (máx. 6 palabras)","angle":"consejo|historia|error|lista|dato|polémica|pregunta|antes-después|mito","hook":"texto del gancho en pantalla (máx. 7 palabras, distinto en cada short)","why":"por qué funciona (1 frase)","ranges":[[desde,hasta]]}]}
+(desde/hasta = índices de palabra incluidos; que cada short sume 25-60 s.)`, { timeoutMs: 12 * 60e3 });
+      const used = new Set();
       const list = (r.shorts || []).map((s) => ({
         title: String(s.title || "Short").slice(0, 60), why: String(s.why || ""),
+        angle: String(s.angle || "").slice(0, 30), hook: String(s.hook || "").slice(0, 70),
         ranges: (s.ranges || []).filter((x) => Array.isArray(x) && x[0] <= x[1] && x[0] >= 0 && x[1] < words.length),
-      })).filter((s) => s.ranges.length);
+      }))
+        // Sin solapes entre shorts (si Claude se equivoca, se queda el primero)
+        .map((s) => ({ ...s, ranges: s.ranges.filter(([a, b]) => { for (let i = a; i <= b; i++) if (used.has(i)) return false; return true; }) }))
+        .filter((s) => {
+          if (!s.ranges.length) return false;
+          for (const [a, b] of s.ranges) for (let i = a; i <= b; i++) used.add(i);
+          return true;
+        });
       if (list.length) return list;
     } catch (e) {
       if (e instanceof NeedLogin) throw e;

@@ -58,7 +58,7 @@ export function createJob(mediaId, { kind = "variants", shorts = 3, variants = V
   if (!m) throw Object.assign(new Error("No encuentro ese vídeo en la biblioteca."), { status: 404 });
   if (m.kind !== "video") throw Object.assign(new Error("Elige un vídeo (no un audio ni una imagen)."), { status: 400 });
   const id = uid();
-  const opts = { shorts: Math.min(8, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules };
+  const opts = { shorts: shorts === "auto" || shorts === 0 ? "auto" : Math.min(25, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules };
   if (kind === "variants" && !opts.variants.length) throw Object.assign(new Error("Elige al menos una versión."), { status: 400 });
   db.prepare(`INSERT INTO autoedit_jobs (id, media_id, kind, name, status, step, options, created_at, updated_at)
     VALUES (?, ?, ?, ?, 'queued', 'En cola', ?, ?, ?)`).run(id, m.id, kind, String(name || m.name).slice(0, 120), JSON.stringify(opts), now(), now());
@@ -134,13 +134,53 @@ async function cutTake(job, work, rawWords, { ranges = null, useClaude } = {}) {
   return readJson(join(work, "words.json"));
 }
 
+/* ---------- Que cada short parezca distinto: composición, plano y color ---------- */
+
+export const FRAMINGS = { wide: { zoom: 1, label: "plano abierto" }, medium: { zoom: 1.12, label: "plano medio" }, close: { zoom: 1.25, label: "primer plano" } };
+export const GRADES = {
+  neutral: { label: "color natural", vf: "" },
+  warm: { label: "cálido", vf: "colorbalance=rs=0.05:gs=0.01:bs=-0.05:rm=0.03:bm=-0.03,eq=saturation=1.06" },
+  cool: { label: "frío", vf: "colorbalance=rs=-0.04:gs=0:bs=0.05:rm=-0.02:bm=0.03,eq=saturation=1.03" },
+  punchy: { label: "contrastado", vf: "eq=contrast=1.1:saturation=1.16:gamma=0.98" },
+  soft: { label: "suave", vf: "eq=contrast=0.94:saturation=0.94:brightness=0.015" },
+};
+const SHORT_LAYOUTS = ["reference", "headline", "minimal", "framed"];
+const FRAMING_KEYS = ["wide", "medium", "close"];
+const GRADE_KEYS = ["neutral", "warm", "cool", "punchy", "soft"];
+const MUSICS = ["synthwave", "lofi"];
+
+/** Combinación de aspecto para el short número k (rota para que dos seguidos no se parezcan). */
+export function lookFor(k) {
+  return {
+    layout: SHORT_LAYOUTS[k % SHORT_LAYOUTS.length],
+    framing: FRAMING_KEYS[(k + Math.floor(k / SHORT_LAYOUTS.length)) % FRAMING_KEYS.length],
+    grade: GRADE_KEYS[(k * 2) % GRADE_KEYS.length],
+    music: MUSICS[Math.floor(k / 2) % MUSICS.length],
+  };
+}
+
+/** base.mp4 = cut.mp4 con el plano (zoom digital centrado en la cara) y el color de este short. */
+async function buildBase(work, look) {
+  const out = join(work, "base.mp4");
+  if (existsSync(out)) return out;
+  const z = FRAMINGS[look.framing]?.zoom ?? 1;
+  const vf = [];
+  // Recorte hacia arriba (la cara suele estar en el tercio superior), luego vuelta a 1080×1920
+  if (z > 1) vf.push(`crop=iw/${z}:ih/${z}:(iw-iw/${z})/2:(ih-ih/${z})*0.28`, "scale=1080:1920:flags=lanczos");
+  if (GRADES[look.grade]?.vf) vf.push(GRADES[look.grade].vf);
+  if (!vf.length) { link(join(work, "cut.mp4"), out); return out; }
+  await run("ffmpeg", ["-v", "error", "-y", "-i", join(work, "cut.mp4"), "-vf", vf.join(","), "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
+  return out;
+}
+
 async function ensureMatte(job, work) {
   const out = join(work, "matte.mp4");
   if (existsSync(out)) return out;
   if (!existsSync(RVM_MODEL)) { console.warn("[autoedit] no está el modelo de recorte; sin texto detrás de la cabeza"); return null; }
   setJob(job.id, { step: "Recortando a la persona (texto detrás de la cabeza)", progress: 0.3 });
+  const src = existsSync(join(work, "base.mp4")) ? join(work, "base.mp4") : join(work, "cut.mp4");
   try {
-    await onGpu(() => py("matte.py", ["--src", join(work, "cut.mp4"), "--out", out, "--model", RVM_MODEL]));
+    await onGpu(() => py("matte.py", ["--src", src, "--out", out, "--model", RVM_MODEL]));
     return out;
   } catch (e) {
     console.warn("[autoedit] recorte falló:", e.message.slice(-300));
@@ -225,7 +265,7 @@ Responde SOLO con JSON: {"ok": true|false, "score": 1-10, "issues": [{"t": segun
 }
 
 /** Render + sonido + revisión + registro de una versión. */
-async function produceItem(job, item, { work, words, plan, matte, info, variant, titleBase }) {
+async function produceItem(job, item, { work, words, plan, matte, info, variant, titleBase, look = null }) {
   const dir = join(ROOT, job.id, "items", item.id);
   mkdirSync(dir, { recursive: true });
   const duration = readJson(join(work, "words.json")).duration;
@@ -233,7 +273,7 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   setItem(item.id, { status: "rendering", step: "Montando gráficos y subtítulos", progress: 0.02 });
   const input = renderInputFor(variant, plan, words, {
     workDir: join(dir, "render"), duration,
-    base: { video: join(work, "cut.mp4"), matte: variant.layout === "reference" ? matte : null, srcWidth: info.srcWidth, srcHeight: info.srcHeight },
+    base: { video: existsSync(join(work, "base.mp4")) ? join(work, "base.mp4") : join(work, "cut.mp4"), matte: variant.layout === "reference" ? matte : null, srcWidth: info.srcWidth, srcHeight: info.srcHeight },
     style: toRenderStyle(),
   });
   writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
@@ -253,7 +293,7 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   link(join(work, "audio48k.wav"), join(mixDir, "audio48k.wav"));
   writeFileSync(join(mixDir, "sfx.json"), JSON.stringify(sfx, null, 1));
   const styleMusic = getStyle().music;
-  const music = await ensureMusic(join(ROOT, job.id), styleMusic && styleMusic !== "auto" ? styleMusic : variant.music, duration);
+  const music = await ensureMusic(join(ROOT, job.id), styleMusic && styleMusic !== "auto" ? styleMusic : (look?.music || variant.music), duration);
   const finalMp4 = join(dir, "final.mp4");
   await py("mix.py", ["--work", mixDir, "--sfx", join(mixDir, "sfx.json"), ...(music ? ["--music", music] : []), "--video", out.video, "--out", finalMp4]);
 
@@ -338,18 +378,21 @@ async function runShorts(job, { src, raw, info, useClaude }) {
   const id = job.id;
   let picks = job.plan?.shorts;
   if (!picks) {
-    setJob(id, { step: "Claude está eligiendo los mejores momentos", progress: 0.2 });
-    picks = await pickShorts(raw, { count: job.options.shorts, vocab: job.options.vocab, useClaude });
+    const dur = raw[raw.length - 1].end;
+    // «Automático»: uno por cada ~50 s de vídeo, entre 3 y 20
+    const count = job.options.shorts === "auto" ? Math.min(20, Math.max(3, Math.round(dur / 50))) : job.options.shorts;
+    setJob(id, { step: `Claude está eligiendo los ${count} mejores momentos`, progress: 0.2 });
+    picks = await pickShorts(raw, { count, vocab: job.options.vocab, useClaude });
+    picks = picks.map((s, k) => ({ ...s, look: lookFor(k) }));
     setJob(id, { plan: { shorts: picks } });
   }
   picks.forEach((s, k) => {
     if (!db.prepare("SELECT id FROM autoedit_items WHERE job_id = ? AND idx = ?").get(id, k)) {
-      db.prepare(`INSERT INTO autoedit_items (id, job_id, idx, label, layout, status, step, short, created_at, updated_at) VALUES (?, ?, ?, ?, 'reference', 'queued', 'En cola', ?, ?, ?)`)
-        .run(uid(), id, k, `Short ${k + 1}: ${s.title}`, JSON.stringify(s), now(), now());
+      db.prepare(`INSERT INTO autoedit_items (id, job_id, idx, label, layout, status, step, short, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', 'En cola', ?, ?, ?)`)
+        .run(uid(), id, k, `Short ${k + 1}: ${s.title}`, (s.look || lookFor(k)).layout, JSON.stringify(s), now(), now());
     }
   });
   const items = db.prepare("SELECT * FROM autoedit_items WHERE job_id = ? ORDER BY idx").all(id).map(row);
-  const variant = VARIANTS.find((v) => v.layout === "reference");
   let done = 0;
   for (const it of items) {
     if (it.status === "done" || it.status === "error") { done++; continue; }
@@ -361,14 +404,18 @@ async function runShorts(job, { src, raw, info, useClaude }) {
       writeFileSync(join(work, "words-raw.json"), JSON.stringify({ words: raw }));
       setItem(it.id, { status: "rendering", step: "Cortando el short", progress: 0.02 });
       const words = await cutTake(job, work, raw, { ranges: it.short.ranges, useClaude });
+      const look = it.short.look || lookFor(it.idx);
+      const variant = VARIANTS.find((v) => v.layout === look.layout) || VARIANTS[0];
       let plan = it.post?.plan;
       if (!plan) {
         setItem(it.id, { step: "Planificando la edición", progress: 0.05 });
-        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: styleNotesForAI() });
+        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: styleNotesForAI(), angle: it.short.angle, hook: it.short.hook });
         setItem(it.id, { post: { plan } });
       }
-      const matte = plan.behind?.length ? await ensureMatte(job, work) : null;
-      await produceItem(job, it, { work, words: words.words, plan, matte, info, variant, titleBase: it.short.title });
+      setItem(it.id, { step: `Plano y color: ${FRAMINGS[look.framing]?.label}, ${GRADES[look.grade]?.label}`, progress: 0.06 });
+      await buildBase(work, look);
+      const matte = plan.behind?.length && variant.layout === "reference" ? await ensureMatte(job, work) : null;
+      await produceItem(job, it, { work, words: words.words, plan, matte, info, variant, titleBase: it.short.title, look });
     } catch (e) {
       if (e instanceof NeedLogin) throw e;
       console.error("[autoedit] short", it.label, e);

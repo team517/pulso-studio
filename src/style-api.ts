@@ -14,6 +14,8 @@ export type EditStyle = {
   notes: string;
   aiNotes: string;
   palette: PaletteColor[];
+  rhythm?: { cutsPerMin: number; seconds: number } | null;
+  aiSuggested?: { caption?: Partial<EditStyle["caption"]>; cards?: Partial<EditStyle["cards"]>; motion?: Partial<EditStyle["motion"]> } | null;
 };
 export type AutoSettings = { enabled: boolean; kind: "variants" | "shorts"; variants: string[]; shorts?: number };
 
@@ -39,7 +41,7 @@ export const styleApi = {
     return req<StyleAsset[]>("POST", "/api/style/assets", fd);
   },
   remove: (id: string) => req("DELETE", `/api/style/assets/${id}`),
-  analyze: () => req<{ palette: PaletteColor[]; suggestion: Partial<EditStyle["colors"]>; aiNotes: string; seen: boolean; style: EditStyle }>("POST", "/api/style/analyze"),
+  analyze: () => req<{ palette: PaletteColor[]; suggestion: Partial<EditStyle["colors"]>; aiNotes: string; seen: boolean; rhythm: EditStyle["rhythm"]; aiSuggested: EditStyle["aiSuggested"]; style: EditStyle }>("POST", "/api/style/analyze"),
 };
 
 /** Nombre CSS con el que se carga cada fuente subida (para la vista previa). */

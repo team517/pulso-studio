@@ -83,3 +83,5 @@
 .ae-drop__icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--accent); color: #fff; flex: none; box-shadow: 0 8px 24px rgba(124, 92, 255, 0.35); }
 .ae-drop b { display: block; font-size: 16px; margin-bottom: 3px; }
 .ae-drop small { color: var(--ink-3); font-size: 13px; }
+
+.ae-item__tags { display: flex; flex-wrap: wrap; gap: 6px; }

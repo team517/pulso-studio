@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { getSetting } from "../db.js";
 
 export class NeedLogin extends Error {
-  constructor() { super("No hay ninguna IA disponible: ni Claude con sesión iniciada ni clave de DeepSeek."); }
+  constructor() { super("Claude no tiene la sesión iniciada en este ordenador."); }
 }
 
 /**
@@ -143,8 +143,14 @@ async function askDeepSeek(prompt, { timeoutMs = 8 * 60e3 } = {}) {
 /** Qué cerebro hay disponible: Claude (si tiene sesión) → DeepSeek (si hay clave) → ninguno. */
 export async function aiProvider() {
   if (await claudeLoggedIn()) return "claude";
-  if (deepseekKey()) return "deepseek";
+  // El usuario quiere que edite SOLO Claude: DeepSeek solo si se activa a propósito (ajuste "ai:allowDeepseek")
+  if (getSetting("ai:allowDeepseek", false) && deepseekKey()) return "deepseek";
   return null;
+}
+
+/** Olvida lo que se sabía de la sesión de Claude (para volver a comprobarla ya). */
+export function resetClaudeCheck() {
+  loginCache = { ok: null, at: 0 };
 }
 
 /** ¿Hay algún cerebro disponible? */

@@ -9,6 +9,8 @@ import { ACCEPT, useUploader } from "../editor/MediaPanel";
 import "./autoedit.css";
 
 const LAYOUT_SHAPE: Record<string, [number, number]> = { reference: [9, 16], headline: [9, 16], minimal: [9, 16], horizontal: [16, 9], framed: [4, 5] };
+const FRAMING_LABEL: Record<string, string> = { wide: "Plano abierto", medium: "Plano medio", close: "Primer plano" };
+const GRADE_LABEL: Record<string, string> = { warm: "Color cálido", cool: "Color frío", punchy: "Color intenso", soft: "Color suave" };
 const STEP_LABEL: Record<AutoItem["status"], string> = { queued: "En cola", rendering: "Renderizando", mixing: "Sonido", qa: "Revisando", done: "Lista", error: "Error" };
 
 export default function AutoEdit() {
@@ -45,7 +47,7 @@ export default function AutoEdit() {
         </div>
       </div>
 
-      {info && !info.claude && <ClaudeLoginNote />}
+      {info && !info.claude && <ClaudeLoginNote onReady={(i) => setInfo(i)} />}
       {info && <DropToEdit variants={info.variants.map((v) => v.key)} onStarted={load} />}
 
       {jobs === null ? <p className="muted">Cargando…</p> : jobs.length === 0 ? (
@@ -67,12 +69,26 @@ export default function AutoEdit() {
   );
 }
 
-function ClaudeLoginNote() {
+function ClaudeLoginNote({ onReady }: { onReady: (i: { claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] }) => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function check() {
+    setBusy(true);
+    try {
+      await autoApi.recheck();
+      const i = await autoApi.info();
+      onReady(i);
+      toast(i.claude ? "Claude está listo: editará él" : "Claude sigue sin sesión en este ordenador", i.claude ? undefined : "bad");
+    } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
   return (
     <div className="note note--warn ae-login">
       <Terminal size={18} />
       <div>
-        <b>No hay ninguna IA disponible.</b> Es la que decide los cortes, las palabras clave y qué gráfico va en cada frase. Sin ella se edita con reglas fijas y queda bastante peor.
+        <b>Claude no tiene la sesión iniciada en este ordenador.</b> Es quien decide los cortes, las palabras clave, los ángulos de cada short y qué gráfico va en cada frase. Inicia sesión en Claude y pulsa «Comprobar».
+        <div className="row" style={{ marginTop: 10 }}>
+          <button className="btn btn--sm btn--primary" disabled={busy} onClick={check}>{busy ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />} Comprobar</button>
+        </div>
       </div>
     </div>
   );
@@ -94,7 +110,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       let started = 0;
       for (const m of up.filter((x) => x.kind === "video")) {
         if (!m.has_audio) { toast(`«${m.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"); continue; }
-        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: 3, allowRules: true });
+        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", allowRules: true });
         started++;
       }
       if (started) toast(started === 1 ? "Subido: ya se está editando. Las versiones irán apareciendo aquí." : `${started} vídeos subidos y editándose.`);
@@ -109,7 +125,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       <span className="ae-drop__icon">{busy ? <Loader2 size={24} className="spin" /> : <Upload size={24} />}</span>
       <span>
         <b>{busy ? "Subiendo…" : "Suelta aquí tu vídeo y se edita solo"}</b>
-        <small>Se cortan los silencios, se ponen subtítulos, gráficos, zooms, efectos y música con tu estilo de edición. Si dura más de 2,5 minutos, salen shorts.</small>
+        <small>Se cortan los silencios, se ponen subtítulos, gráficos, zooms, efectos y música con tu estilo de edición. Si dura más de 2,5 minutos, Claude saca todos los shorts que den de sí (hasta 20), cada uno con su enfoque y su look.</small>
       </span>
       <input ref={input} type="file" hidden accept="video/*" multiple onChange={(e) => { go([...(e.target.files ?? [])]); e.target.value = ""; }} />
     </button>
@@ -126,7 +142,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
   const [mediaId, setMediaId] = useState(videos[0]?.id ?? "");
   const [kind, setKind] = useState<"variants" | "shorts">("variants");
   const [variants, setVariants] = useState(info.variants.map((v) => v.key));
-  const [shorts, setShorts] = useState(3);
+  const [shorts, setShorts] = useState<number | "auto">("auto");
   const [vocab, setVocab] = useState("");
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -140,7 +156,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
     if (!mediaId) return toast("Elige o sube un vídeo.", "bad");
     setBusy(true);
     try {
-      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules: allowRules || !info.claude });
+      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules });
       onCreated();
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
   }
@@ -148,7 +164,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
   return (
     <Modal wide title="Nueva edición automática" icon={<Sparkles size={18} color="var(--accent-2)" />} onClose={onClose}
       foot={<>
-        <span className="muted" style={{ fontSize: 12.5 }}>{info.provider === "claude" ? "Edita Claude." : info.provider === "deepseek" ? "Edita la IA (DeepSeek)." : "Sin IA: se editará con reglas fijas."}</span>
+        <span className="muted" style={{ fontSize: 12.5 }}>{info.provider === "claude" ? "Edita Claude." : info.provider === "deepseek" ? "Edita la IA (DeepSeek)." : "Claude no tiene sesión: pulsa Empezar y se quedará esperando."}</span>
         <span className="spacer" />
         <button className="btn" onClick={onClose}>Cancelar</button>
         <button className="btn btn--primary" disabled={busy || !mediaId || (kind === "variants" && !variants.length)} onClick={() => start()}>
@@ -177,7 +193,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
             <b>Versiones de este vídeo</b><small>El mismo vídeo editado de 5 formas distintas para ver cuál funciona mejor.</small>
           </button>
           <button type="button" className={"ae-mode" + (kind === "shorts" ? " is-on" : "")} onClick={() => setKind("shorts")}>
-            <b>Shorts de un vídeo largo</b><small>Claude elige los mejores momentos y los edita como reels de 25-60 s.</small>
+            <b>Shorts de un vídeo largo</b><small>Claude saca hasta 20 shorts distintos: cada uno con su enfoque (consejo, historia, error, lista…), su gancho, su encuadre, su color y su música.</small>
           </button>
         </div>
       </Field>
@@ -199,8 +215,8 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
           </div>
         </Field>
       ) : (
-        <Field label="Cuántos shorts" hint={long ? undefined : "Funciona mejor con vídeos de más de 2 minutos."}>
-          <div className="seg">{[2, 3, 4, 5, 6].map((n) => <button key={n} className={shorts === n ? "is-on" : ""} onClick={() => setShorts(n)}>{n}</button>)}</div>
+        <Field label="Cuántos shorts" hint={shorts === "auto" ? "Claude saca uno por cada momento bueno (más o menos uno por minuto de vídeo, hasta 20)." : long ? "Si no hay material para tantos, saca los que den de sí sin repetirse." : "Funciona mejor con vídeos de más de 2 minutos."}>
+          <div className="seg">{(["auto", 3, 5, 10, 15, 20] as const).map((n) => <button key={n} className={shorts === n ? "is-on" : ""} onClick={() => setShorts(n)}>{n === "auto" ? "Los que den de sí" : n}</button>)}</div>
         </Field>
       )}
 
@@ -250,7 +266,7 @@ function JobCard({ job, onChange }: { job: AutoJob; onChange: () => void }) {
           )}
           {job.status === "needs_login" && (
             <div className="note note--warn ae-job__note">
-              <div><b>No había ninguna IA disponible.</b> Pulsa «Reintentar» cuando esté lista, o sigue con reglas fijas.</div>
+              <div><b>Esperando a Claude.</b> No tiene la sesión iniciada en este ordenador. Inicia sesión y pulsa «Reintentar», o sigue con reglas fijas (queda peor).</div>
               <div className="row" style={{ marginTop: 10 }}>
                 <button className="btn btn--sm btn--primary" onClick={async () => { await autoApi.retry(job.id); onChange(); }}><RotateCcw size={14} /> Reintentar</button>
                 <button className="btn btn--sm" onClick={async () => { await autoApi.useRules(job.id); onChange(); toast("Editando con reglas fijas"); }}>Seguir sin IA</button>
@@ -316,6 +332,14 @@ function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) 
           <b>{item.label}</b>
           <span className="pill">{item.layout === "horizontal" ? "16:9" : item.layout === "framed" ? "4:5" : "9:16"}</span>
         </div>
+        {item.short && (item.short.angle || item.short.look) && (
+          <div className="ae-item__tags">
+            {item.short.angle && <span className="pill pill--accent">{item.short.angle}</span>}
+            {item.short.look && <span className="pill">{FRAMING_LABEL[item.short.look.framing] ?? item.short.look.framing}</span>}
+            {item.short.look && item.short.look.grade !== "neutral" && <span className="pill">{GRADE_LABEL[item.short.look.grade] ?? item.short.look.grade}</span>}
+          </div>
+        )}
+        {item.short?.hook && <p className="ae-item__why"><b>Gancho:</b> «{item.short.hook}»</p>}
         {item.short?.why && <p className="ae-item__why">{item.short.why}</p>}
         {item.status === "error" && <p className="ae-item__err">{item.error}</p>}
         {item.status === "done" && item.video && <span className="muted mono" style={{ fontSize: 12 }}>{fmtTime(item.video.duration, true)} · {fmtSize(item.video.size)}</span>}

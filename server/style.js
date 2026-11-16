@@ -29,6 +29,8 @@ export const DEFAULT_STYLE = {
   notes: "",                                                      // instrucciones para la IA
   aiNotes: "",                                                    // lo que la IA vio en las referencias
   palette: [],                                                    // colores sacados de las referencias
+  rhythm: null,                                                   // { cutsPerMin } medido en los vídeos de referencia
+  aiSuggested: null,                                              // lo que Claude propone tras ver las referencias
 };
 export const DEFAULT_AUTO = { enabled: true, kind: "variants", variants: ["reference", "headline", "minimal", "horizontal", "framed"] };
 
@@ -71,6 +73,7 @@ export function styleNotesForAI() {
   if (s.graphics === "many") parts.push("Muchos gráficos: casi cada idea con su gráfico, ritmo alto.");
   if (s.caption.uppercase) parts.push("Los textos de pantalla van en MAYÚSCULAS.");
   if (s.aiNotes) parts.push("Estilo visto en sus referencias: " + s.aiNotes);
+  if (s.rhythm?.cutsPerMin) parts.push(`Ritmo de sus referencias: unos ${s.rhythm.cutsPerMin} cambios visuales por minuto (cortes, gráficos o zooms): mantén ese ritmo, un estímulo nuevo cada ~${Math.max(1.5, Math.round(600 / s.rhythm.cutsPerMin) / 10)} s.`);
   if (s.notes) parts.push("Instrucciones del usuario (obligatorias): " + s.notes);
   return parts.join("\n");
 }
@@ -228,6 +231,25 @@ export function registerStyleRoutes(app, wrap) {
     if (!refs.length) throw Object.assign(new Error("Sube primero alguna referencia (capturas o vídeos de reels que te gusten)."), { status: 400 });
     const files = refs.map((r) => ({ path: join(STYLE_DIR, r.file), video: VID_EXT.includes(extname(r.file).toLowerCase()) })).filter((f) => existsSync(f.path));
     const { palette, suggestion } = await extractPalette(files);
+    // Ritmo de edición: cambios de plano por minuto en los vídeos de referencia
+    let rhythm = null;
+    const vids = files.filter((f) => f.video);
+    if (vids.length) {
+      let cuts = 0, secs = 0;
+      for (const v of vids) {
+        const err = await new Promise((resolve) => {
+          const p = spawn("ffmpeg", ["-hide_banner", "-i", v.path, "-vf", "scale=320:-2,select='gt(scene,0.32)',showinfo", "-an", "-f", "null", "-"], { windowsHide: true });
+          const out = [];
+          p.stderr.on("data", (d) => out.push(d));
+          p.on("close", () => resolve(Buffer.concat(out).toString("utf8")));
+          p.on("error", () => resolve(""));
+        });
+        cuts += (err.match(/pts_time:/g) || []).length;
+        const d = err.match(/Duration: (\d+):(\d+):([\d.]+)/);
+        if (d) secs += Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]);
+      }
+      if (secs > 3) rhythm = { cutsPerMin: Math.round((cuts / secs) * 60), seconds: Math.round(secs) };
+    }
     let aiNotes = "";
     let seen = false;
     if (await canSeeImages()) {
@@ -255,7 +277,8 @@ export function registerStyleRoutes(app, wrap) {
       }
     }
     const cur = getSetting("style:default", {});
-    setSetting("style:default", { ...cur, palette });
-    res.json({ palette, suggestion, aiNotes, seen, style: getStyle() });
+    setSetting("style:default", { ...cur, palette, ...(rhythm ? { rhythm } : {}) });
+    const saved = getSetting("style:default", {});
+    res.json({ palette, suggestion, aiNotes, seen, rhythm, aiSuggested: saved.aiSuggested ?? null, style: getStyle() });
   }));
 }

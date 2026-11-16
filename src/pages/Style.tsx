@@ -64,8 +64,8 @@ export default function StylePage() {
     try {
       const r = await styleApi.analyze();
       setSuggestion(r.suggestion);
-      setStyle((s) => (s ? { ...s, palette: r.palette, aiNotes: r.aiNotes || s.aiNotes } : s));
-      toast(r.seen ? "Referencias analizadas: colores y estilo" : "Colores sacados de tus referencias");
+      setStyle((s) => (s ? { ...s, palette: r.palette, aiNotes: r.aiNotes || s.aiNotes, rhythm: r.rhythm ?? s.rhythm, aiSuggested: r.aiSuggested ?? s.aiSuggested } : s));
+      toast(r.seen ? "Claude ha mirado tus referencias: colores, estilo y ritmo" : "Colores y ritmo sacados de tus referencias");
     } catch (e) { toast((e as Error).message, "bad"); } finally { setAnalyzing(false); }
   }
 
@@ -99,7 +99,7 @@ export default function StylePage() {
           </Section>
 
           {/* Referencias */}
-          <Section icon={<ImagePlus size={16} />} title="Referencias" sub="Capturas o vídeos de reels con el estilo que quieres copiar.">
+          <Section icon={<ImagePlus size={16} />} title="Referencias" sub="Adjunta vídeos (o capturas) de reels con la edición que quieres copiar: Claude se fija en sus letras, subtítulos, tarjetas, colores, animaciones y ritmo.">
             <div className="st-refs">
               {refs.map((r) => (
                 <div key={r.id} className="st-ref">
@@ -125,7 +125,16 @@ export default function StylePage() {
                 <button className="btn btn--sm btn--primary" onClick={() => { set("colors", { ...style.colors, ...suggestion }); setSuggestion(null); toast("Colores aplicados"); }}>Usar estos colores</button>
               </div>
             )}
-            {style.aiNotes && <p className="st-ai"><b>Lo que ha visto la IA:</b> {style.aiNotes}</p>}
+            {style.rhythm?.cutsPerMin != null && <p className="st-hint">Ritmo medido en tus vídeos de referencia: <b>{style.rhythm.cutsPerMin} cambios de plano por minuto</b>. Las ediciones seguirán ese ritmo.</p>}
+            {style.aiNotes && <p className="st-ai"><b>Lo que ha visto Claude:</b> {style.aiNotes}</p>}
+            {style.aiSuggested && (
+              <button className="btn btn--sm btn--primary" style={{ alignSelf: "flex-start" }} onClick={() => {
+                const sg = style.aiSuggested!;
+                setStyle({ ...style, caption: { ...style.caption, ...(sg.caption || {}) }, cards: { ...style.cards, ...(sg.cards || {}) }, motion: { ...style.motion, ...(sg.motion || {}) } });
+                setReplay((n) => n + 1);
+                toast("Aplicado: subtítulos, tarjetas y animación como en tus referencias");
+              }}><Wand2 size={14} /> Aplicar lo que ha visto Claude</button>
+            )}
           </Section>
 
           {/* Tipografías */}

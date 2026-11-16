@@ -66,7 +66,7 @@ app.post("/api/media", upload.array("files", 50), wrap(async (req, res) => {
       const auto = getAutoSettings();
       if (auto.enabled) {
         try {
-          saved.autoeditJob = createJob(id, { kind: info.duration > 150 ? "shorts" : "variants", variants: auto.variants, shorts: auto.shorts || 3 });
+          saved.autoeditJob = createJob(id, { kind: info.duration > 150 ? "shorts" : "variants", variants: auto.variants, shorts: auto.shorts || "auto" });
         } catch (e) { console.warn("[autoedit] no se pudo empezar sola:", e.message); }
       }
     }
