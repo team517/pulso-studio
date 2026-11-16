@@ -2,6 +2,14 @@
 import { createJob, jobView, listJobs, editedLibrary, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick } from "./pipeline.js";
 import { aiProvider, resetClaudeCheck } from "./brain.js";
 import { IS_SERVER } from "../config.js";
+import { readFileSync } from "node:fs";
+import { DATA } from "../db.js";
+
+/** En EasyPanel: ¿está data/ en un volumen? (si no, se borra todo al implementar) */
+function dataPersistent() {
+  if (!IS_SERVER || process.platform !== "linux") return true;
+  try { return readFileSync("/proc/self/mountinfo", "utf8").split("\n").some((l) => l.split(" ")[4] === DATA); } catch { return null; }
+}
 import { workerStatus } from "../worker-api.js";
 
 export function registerAutoeditRoutes(app, wrap) {
@@ -9,7 +17,7 @@ export function registerAutoeditRoutes(app, wrap) {
     // En el servidor, quien edita es tu PC: «Claude listo» = PC conectado y con Claude
     const worker = IS_SERVER ? workerStatus() : null;
     const provider = IS_SERVER ? (worker.claude ? "claude" : null) : await aiProvider();
-    res.json({ claude: !!provider, provider, worker, variants: VARIANTS.map((v) => ({ key: v.key, label: v.label, layout: v.layout, width: v.width, height: v.height })) });
+    res.json({ claude: !!provider, provider, worker, storage: dataPersistent(), variants: VARIANTS.map((v) => ({ key: v.key, label: v.label, layout: v.layout, width: v.width, height: v.height })) });
   }));
   app.get("/api/autoedit/jobs", wrap((req, res) => res.json(listJobs())));
   // Volver a comprobar ya la sesión de Claude (tras iniciar sesión)

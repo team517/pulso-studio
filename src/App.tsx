@@ -28,6 +28,7 @@ const NAV = [
 export default function App() {
   const [path] = usePath();
   const [online, setOnline] = useState(true);
+  const [storageOk, setStorageOk] = useState(true);
   const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null } | null>(null);
   const pathname = path.split("?")[0];
 
@@ -36,7 +37,7 @@ export default function App() {
     const check = () => {
       fetch("/api/platforms").then((r) => setOnline(r.ok)).catch(() => setOnline(false));
       // En el panel: ¿está tu PC encendido para editar?
-      if (IN_PANEL) fetch("/api/autoedit/info").then((r) => r.json()).then((i) => setPc(i.worker ?? null)).catch(() => {});
+      if (IN_PANEL) fetch("/api/autoedit/info").then((r) => r.json()).then((i) => { setPc(i.worker ?? null); setStorageOk(i.storage !== false); }).catch(() => {});
     };
     check();
     const t = setInterval(check, 15000);
@@ -96,7 +97,10 @@ export default function App() {
           )}
         </div>
       </aside>
-      <main className="main">{page}</main>
+      <main className="main">
+        {!storageOk && <div className="note note--bad" style={{ margin: "16px 24px 0" }}><b>Falta el volumen en EasyPanel.</b> En el servicio, Montajes → añade un volumen con la ruta <code>/app/data</code> e implementa. Sin él, cada vez que implementas se borran los vídeos, la contraseña y las conexiones.</div>}
+        {page}
+      </main>
     </div>
   );
 }
