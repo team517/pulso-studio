@@ -213,7 +213,7 @@ export default function StylePage() {
               </div>
             </Field>
             <div className="grid2">
-              <Field label="Cantidad de gráficos"><Seg value={style.graphics} onChange={(v) => set("graphics", v)} options={[["few", "Pocos"], ["balanced", "Equilibrado"], ["many", "Muchos"]]} /></Field>
+              <Field label="Cantidad de gráficos"><Seg value={style.graphics} onChange={(v) => set("graphics", v)} options={[["none", "Ninguno"], ["few", "Pocos"], ["balanced", "Equilibrado"], ["many", "Muchos"]]} /></Field>
               <Field label="Animación"><Seg value={String(style.motion.intensity) as "1" | "2" | "3"} onChange={(v) => set("motion", { intensity: Number(v) as 1 | 2 | 3 })} options={[["1", "Sobria"], ["2", "Normal"], ["3", "Enérgica"]]} /></Field>
             </div>
           </Section>

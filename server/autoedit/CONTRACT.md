@@ -94,3 +94,56 @@ type UserStyle = {
 Reglas: con fuentes del usuario, se cargan con `@font-face` desde una copia dentro del proyecto HyperFrames (nada de rutas fuera);
 el ajuste automático de tamaños tiene que seguir funcionando con la fuente del usuario (medir con un margen mayor si no se puede medir);
 el logo nunca tapa la cara ni la zona segura; los colores tienen que tener contraste suficiente (si no, se oscurece/aclara el fondo de la tarjeta).
+
+## UserStyle v2 · calcar una referencia (todo opcional)
+
+Para copiar al detalle («calcado») un reel de referencia: tipografía, color, tamaño, posición, borde/sombra de los
+subtítulos, palabras por trozo, palabra clave, estilo de zoom y aspecto de cine, con pocos o ningún gráfico.
+**Cada campo es opcional; si no viene, todo queda exactamente como antes** (mismo HTML/JS generado, byte a byte).
+Valores fuera de rango se recortan; HEX inválidos se ignoran.
+
+```ts
+type UserStyle = {
+  // …campos de arriba…
+  caption?: {
+    // los de siempre: size, uppercase, position, animation, keywordStyle
+    scale?: number;          // 0.6–1.6; si viene, manda sobre `size` (factor sobre el tamaño del formato)
+    yPct?: number;           // centro vertical de la caja de subtítulos, fracción del alto (p. ej. 0.72); manda sobre `position`.
+                             // Se recorta a 0.12–0.86; la caja mantiene su ancho (zona segura) y no se sale del cuadro ni de las franjas.
+                             // Vale para chest/bottom/side/below-frame y karaoke. Las tarjetas pasan al hueco libre más grande
+                             // (≥ 240 px) de su zona; si no hay hueco, se quedan y los subtítulos se ocultan mientras se ven.
+    weight?: number;         // 100–900 (se redondea a centenas): peso de la fuente de subtítulos (el ajuste mide más ancho si > 700)
+    stroke?: { color: string; width: number } | null;   // borde del texto: HEX + px visibles fuera de la letra a 1080 px de lado corto
+                             // (0.5–16; se escala con el lado corto del lienzo). Se pinta con -webkit-text-stroke + paint-order: stroke fill (el relleno queda encima)
+    shadow?: "none" | "soft" | "strong";                // sustituye la sombra por defecto (también la de la palabra clave).
+                             // Texto oscuro → sombras claras. «none» sin borde ni caja deja una sombra mínima (0 1px 3px) para que se lea.
+    bg?: { color: string; opacity: number; radius: number } | null; // caja detrás de cada subtítulo (estilo TikTok):
+                             // HEX, opacidad 0.05–1, radio 0–60 px a 1080 de lado corto; relleno .25em .45em (el ajuste de tamaño lo descuenta)
+    letterSpacing?: number;  // em, −0.1–0.3 (p. ej. −0.02 o 0.02); se aplica también a la palabra clave
+    lines?: 1 | 2;           // máximo de líneas por trozo: 1 = siempre una línea (se reduce el tamaño lo que haga falta); 2 = como antes
+    keywordColor?: string;   // HEX de la palabra clave en los subtítulos (big: texto; highlight: texto; box: color de la caja;
+                             // karaoke: palabra clave). Sin él, theme.gold como siempre
+    keywordScale?: number;   // 0.6–2. highlight: tamaño de la palabra clave respecto al del subtítulo; big: respecto al tamaño
+                             // de palabra clave del formato. Por defecto 1
+    keywordFont?: "same" | "keyword";  // same = la palabra clave usa la fuente (y el peso) de los subtítulos; keyword = fuente de
+                             // palabra clave también en highlight/box. Sin él: big → fuente de palabra clave, highlight/box → la de subtítulos
+  };
+  motion?: {
+    intensity?: 1 | 2 | 3;   // el de siempre
+    zoomStyle?: "smooth" | "punch" | "none";  // smooth = zooms suaves (actual); punch = en cada zoom la escala salta al instante
+                             // (duración 0, sin curva, sin zoom de entrada; típico de reels con cortes); none = ningún zoom (tampoco el de entrada)
+    zoomMax?: number;        // 1.0–1.25: tope de escala del zoom (sustituye a MAX_ZOOM = 1.10). Con más zoom las tarjetas empiezan
+                             // más abajo para no tapar la barbilla
+  };
+  look?: {                   // aspecto de cine (no confundir con cards.look)
+    grain?: number;          // 0–1: grano de película (tesela de ruido SVG en «overlay» que salta 12 veces/s, movida por la línea
+                             // de tiempo de GSAP con steps(): determinista al buscar fotograma). Encima de la toma, debajo de gráficos y subtítulos
+    vignette?: number;       // 0–1: viñeta radial sobre la toma (fuera de #zoom: no escala con el zoom)
+    letterbox?: boolean;     // franjas negras arriba y abajo (6 % del alto cada una) en los verticales a sangre (reference, headline,
+                             // minimal); subtítulos, titular, tarjetas, palabra gigante y logo se mantienen dentro de la zona visible
+  };
+};
+```
+
+En `RenderInput.zooms[]`, un zoom con `ease: "cut"` es un cambio de escala instantáneo (duración 0), en cualquier `zoomStyle`
+salvo `none`.

@@ -10,7 +10,7 @@ export type EditStyle = {
   motion: { intensity: 1 | 2 | 3 };
   logo: { id: string; position: "top-left" | "top-right" | "bottom-left" | "bottom-right"; size: number } | null;
   music: "auto" | "synthwave" | "lofi" | "none";
-  graphics: "few" | "balanced" | "many";
+  graphics: "none" | "few" | "balanced" | "many";
   notes: string;
   aiNotes: string;
   palette: PaletteColor[];

@@ -24,7 +24,8 @@ function cropY(frame, at) {
 
 const ALL = ["card", "checklist", "strike", "stat", "days", "compare", "chart", "behind", "scene", "icons"];
 
-export function layoutGeometry(layout, W, H) {
+// maxZoom: tope de zoom del estilo (motion.zoomMax); con más zoom la barbilla baja y las tarjetas empiezan más abajo
+export function layoutGeometry(layout, W, H, maxZoom = MAX_ZOOM) {
   if (layout === "horizontal") {
     const fh = H - 80, fw = Math.round(fh * SRC.w / SRC.h);
     const frame = { x: 90, y: 40, w: fw, h: fh, r: 40, originY: 0.3, shadow: true };
@@ -43,7 +44,7 @@ export function layoutGeometry(layout, W, H) {
   if (layout === "framed") {
     const frame = { x: 90, y: 225, w: 900, h: 920, r: 44, originY: 0.35, shadow: true };
     frame.py = cropY(frame, 0.4);
-    const chin = mapY(SRC.chinY, frame, MAX_ZOOM);
+    const chin = mapY(SRC.chinY, frame, maxZoom);
     const top = Math.ceil(chin + 30);
     return {
       layout, W, H, frame, bg: true,
@@ -58,7 +59,7 @@ export function layoutGeometry(layout, W, H) {
   }
   // verticales 1080×1920 a sangre
   const frame = { x: 0, y: 0, w: W, h: H, r: 0, originY: 0.3, py: 0.5, shadow: false };
-  const chin = mapY(SRC.chinY, frame, MAX_ZOOM);
+  const chin = mapY(SRC.chinY, frame, maxZoom);
   const cardTop = Math.max(1065, Math.ceil(chin + 60));
   const base = {
     layout, W, H, frame, bg: false,
@@ -96,10 +97,14 @@ export function layoutGeometry(layout, W, H) {
 
 // ─────────────── estilo del usuario: posición de subtítulos y logo ───────────────
 // pos: "auto" | "high" | "low"; logo: { position, size (fracción del ancho), aspect (alto/ancho) } | null
-export function applyStyleGeometry(geo, pos, logo) {
+// v2 (opcional): { yPct: centro vertical de los subtítulos (fracción del alto) | null, letterbox: franjas de cine }
+export function applyStyleGeometry(geo, pos, logo, v2 = null) {
   const g = JSON.parse(JSON.stringify(geo));
   const vertical = g.H > g.W && g.frame.r === 0;
-  if (pos === "high" || pos === "low") {
+  // franjas negras de cine (solo verticales a sangre): ~6 % arriba y abajo; nada se sale de la zona visible
+  if (v2?.letterbox && vertical) g.letterbox = Math.round(g.H * 0.06);
+  if (v2?.yPct != null) placeCaptionAt(g, v2.yPct);
+  else if (pos === "high" || pos === "low") {
     const top = g.layout === "reference" ? g.cap.y : g.slot.y; // primera línea libre bajo la barbilla
     if (g.layout === "reference" && pos === "low") {
       // como la caja «chest» del contrato: tarjetas pegadas a la barbilla y subtítulos debajo
@@ -116,12 +121,21 @@ export function applyStyleGeometry(geo, pos, logo) {
     }
     // framed: los subtítulos ya van fuera del marco; «high»/«low» se quedan como «auto»
   }
+  if (g.letterbox) {
+    const lb = g.letterbox + 8;
+    for (const k of ["title", "slot", "cap", "overlayWord"]) {
+      const r = g[k];
+      if (!r) continue;
+      const y = Math.max(r.y, lb), y1 = Math.min(r.y + r.h, g.H - lb);
+      if (y !== r.y || y1 !== r.y + r.h) g[k] = { ...r, y, h: Math.max(40, y1 - y) };
+    }
+  }
   if (logo) {
     const W = g.W, H = g.H;
     let w = Math.round(logo.size * W), h = Math.round(w * logo.aspect);
     // zona permitida y caja de la cara que nunca se tapa
     let area, face;
-    if (vertical) { area = { x0: 60, y0: 230, x1: W - 140, y1: H - 380 }; face = { x0: 290, y0: 230, x1: 790, y1: 1000 }; }
+    if (vertical) { area = { x0: 60, y0: Math.max(230, (g.letterbox || 0) + 20), x1: W - 140, y1: Math.min(H - 380, H - (g.letterbox || 0) - 20) }; face = { x0: 290, y0: 230, x1: 790, y1: 1000 }; }
     else if (g.layout === "horizontal") { area = { x0: 30, y0: 30, x1: W - 30, y1: H - 30 }; const f = g.frame; face = { x0: f.x + f.w * 0.2, y0: f.y, x1: f.x + f.w * 0.8, y1: f.y + f.h * 0.62 }; }
     else { area = { x0: 24, y0: 24, x1: W - 24, y1: H - 24 }; const f = g.frame; face = { x0: f.x + f.w * 0.22, y0: f.y, x1: f.x + f.w * 0.78, y1: f.y + f.h * 0.72 }; }
     const left = logo.position.endsWith("left"), topPos = logo.position.startsWith("top");
@@ -147,4 +161,22 @@ export function applyStyleGeometry(geo, pos, logo) {
     }
   }
   return g;
+}
+
+// Subtítulos con el centro a «yPct» del alto (calcado de una referencia). La caja conserva su ancho (zona segura)
+// y no se sale del cuadro (ni de las franjas de cine). Las tarjetas pasan al hueco libre más grande de su zona
+// (si mide ≥ 240 px); si no hay hueco, se quedan donde estaban y los subtítulos se ocultan mientras se ven.
+function placeCaptionAt(g, yPct) {
+  const c = g.cap, lb = g.letterbox || 0;
+  const lo = lb + 12, hi = g.H - lb - 12;
+  const y = Math.round(Math.max(lo, Math.min(hi - c.h, yPct * g.H - c.h / 2)));
+  const gap = 20, s = g.slot;
+  g.cap = { ...c, y };
+  if (!s || g.layout === "minimal") return; // minimal oculta los subtítulos mientras hay un gráfico
+  // zona de tarjetas: en «reference» empezaba bajo el subtítulo (que ya no está ahí); en el resto, la de siempre
+  const zTop = g.layout === "reference" ? Math.min(c.y, s.y) : s.y, zBot = s.y + s.h;
+  const pieces = [[zTop, Math.min(zBot, y - gap)], [Math.max(zTop, y + c.h + gap), zBot]];
+  const [a, b] = pieces.sort((p, q) => (q[1] - q[0]) - (p[1] - p[0]))[0];
+  if (b - a >= 240) g.slot = { ...s, y: a, h: b - a };
+  else if (s.y < y + c.h && s.y + s.h > y) g.hideCapsOnSlot = true; // no cabe al lado: mientras hay tarjeta, sin subtítulos
 }

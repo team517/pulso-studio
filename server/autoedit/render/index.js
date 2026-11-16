@@ -113,8 +113,9 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
     setStyle(style);
     try {
       const inp = { ...input, theme };
-      let g = layoutGeometry(input.layout, input.width, input.height);
-      if (style.user) g = applyStyleGeometry(g, style.caption.position, style.logo ? { ...style.logo, aspect: logoAspect } : null);
+      let g = layoutGeometry(input.layout, input.width, input.height, style.motion.zoomMax ?? undefined);
+      if (style.user) g = applyStyleGeometry(g, style.caption.position, style.logo ? { ...style.logo, aspect: logoAspect } : null,
+        { yPct: style.caption.yPct, letterbox: style.fx.letterbox });
       return fn(inp, g);
     } finally { setStyle(null); }
   };

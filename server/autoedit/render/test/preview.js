@@ -24,8 +24,9 @@ const base = noMatte ? input.base.video : bi > 0 ? process.argv[bi + 1] : fs.exi
 // igual que renderVariant: el estilo se activa solo mientras se genera el HTML
 const { style, theme } = resolveStyle(input);
 setStyle(style);
-let geo = layoutGeometry(layout, input.width, input.height);
-if (style.user) geo = applyStyleGeometry(geo, style.caption.position, style.logo ? { ...style.logo, aspect: 1 / 3 } : null);
+let geo = layoutGeometry(layout, input.width, input.height, style.motion.zoomMax ?? undefined);
+if (style.user) geo = applyStyleGeometry(geo, style.caption.position, style.logo ? { ...style.logo, aspect: 1 / 3 } : null,
+  { yPct: style.caption.yPct, letterbox: style.fx.letterbox });
 const plan = planGraphics(input, geo, !noMatte);
 const dir = path.join(work, "hf");
 fs.rmSync(dir, { recursive: true, force: true });

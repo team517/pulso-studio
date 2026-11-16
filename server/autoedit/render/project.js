@@ -137,19 +137,30 @@ export function planGraphics(input, geo, hasMatte) {
 export function hiddenRanges(input, geo, plan) {
   const r = [...(input.hideCaptionsDuring || [])].map(([a, b]) => [+a, +b]);
   for (const s of plan.scenes) r.push([s.start, s.end]);
-  if (geo.layout === "minimal") for (const g of plan.slot) r.push([g.start, g.end]);
+  if (geo.layout === "minimal" || geo.hideCapsOnSlot) for (const g of plan.slot) r.push([g.start, g.end]);
   return r.sort((a, b) => a[0] - b[0]);
 }
 
 // ─────────────── zooms ───────────────
+// zoomStyle (estilo): smooth = como siempre; punch = cada zoom es un salto de escala al instante (sin zoom de entrada);
+// none = sin ningún zoom. Un zoom con ease "cut" también es un salto al instante. zoomMax sustituye a MAX_ZOOM.
 function zoomScript(input, geo) {
   const D = input.duration, out = [];
   const punchy = geo.layout === "minimal";
-  const zs = [...(input.zooms || [])].map((z) => ({ t: clamp(+z.t || 0, 0, D), to: clamp(1 + ((+z.to || 1) - 1) * S().motion.zoom, 1, MAX_ZOOM), dur: Math.max(0.3, (+z.dur || 1.2) * S().motion.zoomDur), ease: z.ease }))
+  const zStyle = S().motion.zoomStyle || "smooth", zMax = S().motion.zoomMax ?? MAX_ZOOM;
+  if (zStyle === "none") return out;
+  const zs = [...(input.zooms || [])].map((z) => ({ t: clamp(+z.t || 0, 0, D), to: clamp(1 + ((+z.to || 1) - 1) * S().motion.zoom, 1, zMax), dur: Math.max(0.3, (+z.dur || 1.2) * S().motion.zoomDur), ease: z.ease }))
     .sort((a, b) => a.t - b.t);
   let cur = 1;
-  if (!zs.length || zs[0].t >= 1.5) { out.push(`tl.fromTo("#zoom", { scale: 1.06 }, { scale: 1, duration: 1.4, ease: "power3.out" }, 0);`); }
+  if (zStyle !== "punch" && (!zs.length || zs[0].t >= 1.5)) { out.push(`tl.fromTo("#zoom", { scale: 1.06 }, { scale: 1, duration: 1.4, ease: "power3.out" }, 0);`); }
   zs.forEach((z, i) => {
+    if (zStyle === "punch" || z.ease === "cut") {
+      // salto seco (como un corte con reencuadre): duración 0, sin curva
+      if (Math.abs(z.to - cur) < 0.001) return;
+      out.push(`tl.fromTo("#zoom", { scale: ${r3(cur)} }, { scale: ${r3(z.to)}, duration: 0, ease: "none"${out.length ? ", immediateRender: false" : ""} }, ${r3(z.t)});`);
+      cur = z.to;
+      return;
+    }
     let dur = punchy ? Math.max(0.35, z.dur * 0.6) : z.dur;
     const next = zs[i + 1];
     if (next && z.t + dur > next.t) dur = Math.max(0.2, next.t - z.t);
@@ -197,6 +208,37 @@ function shadeHex(hex, f) {
   if (h.length === 3) h = h.split("").map((c) => c + c).join("");
   const n = parseInt(h.slice(0, 6), 16);
   return "#" + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c * (1 + f)).toString(16).padStart(2, "0")).join("");
+}
+
+// ─────────────── aspecto de cine: grano, viñeta, franjas (UserStyle.look; sin estilo, nada) ───────────────
+// El grano es una tesela de ruido SVG (feTurbulence) cuyo background-position salta a saltos fijos desde la línea
+// de tiempo de GSAP («steps»): determinista al buscar cualquier fotograma.
+const NOISE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><filter id="n" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="3" seed="7" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncR type="linear" slope="2.2" intercept="-.6"/><feFuncG type="linear" slope="2.2" intercept="-.6"/><feFuncB type="linear" slope="2.2" intercept="-.6"/></feComponentTransfer></filter><rect width="256" height="256" filter="url(#n)"/></svg>`;
+function lookLayers(geo, D) {
+  const fx = S().fx || {}, out = { css: "", js: [], inFrame: "", bars: "" };
+  if (fx.vignette > 0) {
+    const a = r3(0.82 * fx.vignette), m = r3(0.45 * fx.vignette);
+    out.css += `
+      #fx-vign { position: absolute; inset: 0; display: block; pointer-events: none; background: radial-gradient(ellipse 80% 62% at 50% 44%, rgba(0,0,0,0) 48%, rgba(0,0,0,${m}) 78%, rgba(0,0,0,${a}) 100%); }`;
+    out.inFrame += `<div id="fx-vign"></div>`;
+  }
+  if (fx.grain > 0) {
+    const n = Math.max(1, Math.round(D * 12)); // 12 saltos por segundo, como el grano de película
+    out.css += `
+      #fx-grain { position: absolute; inset: 0; display: block; pointer-events: none; opacity: ${r3(0.1 + 0.5 * fx.grain)}; mix-blend-mode: overlay;
+            background-image: url("data:image/svg+xml;base64,${Buffer.from(NOISE_SVG).toString("base64")}"); background-size: 256px 256px; background-position: 0px 0px; }`;
+    out.inFrame += `<div id="fx-grain"></div>`;
+    out.js.push(`tl.fromTo("#fx-grain", { backgroundPosition: "0px 0px" }, { backgroundPosition: "${n * 173}px ${n * -89}px", duration: ${r3(D)}, ease: "steps(${n})" }, 0);`);
+  }
+  if (geo.letterbox) {
+    const h = geo.letterbox;
+    out.css += `
+      .fx-bar { position: absolute; left: 0; width: 100%; height: ${h}px; background: #000; display: block; pointer-events: none; }
+      #fx-bar-t { top: 0; }
+      #fx-bar-b { bottom: 0; }`;
+    out.bars = `      <div id="fx-bar-t" class="fx-bar"></div><div id="fx-bar-b" class="fx-bar"></div>`;
+  }
+  return out;
 }
 
 // ─────────────── etapa 2: composición final ───────────────
@@ -329,7 +371,12 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
     script.push(`tl.fromTo("#orb1", { x: 0, y: 0 }, { x: ${r2(-W * 0.16)}, y: ${r2(-H * 0.14)}, duration: ${r3(D / 2)}, ease: "sine.inOut", yoyo: true, repeat: 1 }, 0);`);
     script.push(`tl.fromTo("#orb2", { scale: 1, x: 0 }, { scale: 1.3, x: ${r2(-W * 0.2)}, duration: ${r3(D / 2)}, ease: "sine.inOut", yoyo: true, repeat: 1 }, 0);`);
   }
-  body.push(`      <div id="frame"><div id="zoom"><video id="base" class="clip" src="assets/base.mp4" muted playsinline data-start="0" data-duration="${r3(D)}" data-track-index="0"></video></div></div>`);
+  // aspecto de cine (estilo): grano y viñeta sobre la toma (fuera de #zoom: no escalan), franjas encima del marco
+  const look = lookLayers(geo, D);
+  head += look.css;
+  script.push(...look.js);
+  body.push(`      <div id="frame"><div id="zoom"><video id="base" class="clip" src="assets/base.mp4" muted playsinline data-start="0" data-duration="${r3(D)}" data-track-index="0"></video></div>${look.inFrame}</div>`);
+  if (look.bars) body.push(look.bars);
   body.push(host("graphics", "graphics.html", 2, W, H, D));
   body.push(host("captions", "captions.html", 3, W, H, D, ' data-track-kind="captions"'));
   if (S().logo && geo.logo) {

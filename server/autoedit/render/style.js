@@ -14,9 +14,13 @@ const DEFAULT = {
   },
   faces: [], files: [],
   colors: { caption: "#ffffff" },
-  caption: { scale: 1, uppercase: null, position: "auto", animation: "soft", keywordStyle: "big" },
+  caption: { scale: 1, uppercase: null, position: "auto", animation: "soft", keywordStyle: "big",
+    // v2 (calcar una referencia): null = lo de siempre
+    yPct: null, weight: null, stroke: null, shadow: null, bg: null, letterSpacing: null, lines: null,
+    keywordColor: null, keywordScale: 1, keywordFont: null },
   look: "glass",
-  motion: { level: 2, spring: 1, dist: 1, zoom: 1, zoomDur: 1 },
+  motion: { level: 2, spring: 1, dist: 1, zoom: 1, zoomDur: 1, zoomStyle: "smooth", zoomMax: null },
+  fx: { grain: 0, vignette: 0, letterbox: false }, // aspecto de cine (UserStyle.look)
   logo: null,
 };
 
@@ -52,7 +56,6 @@ export function resolveStyle(input) {
 
   // colores: mandan sobre el tema
   const c = u.colors || {};
-  const hex = (v) => (typeof v === "string" && /^#?[0-9a-f]{3}([0-9a-f]{3})?$/i.test(v.trim()) ? (v.trim().startsWith("#") ? v.trim() : "#" + v.trim()) : null);
   if (hex(c.accent)) theme.accent = hex(c.accent);
   if (hex(c.accent2)) theme.accent2 = hex(c.accent2);
   if (hex(c.keyword)) theme.gold = hex(c.keyword);
@@ -72,6 +75,23 @@ export function resolveStyle(input) {
   st.caption.position = ["auto", "high", "low"].includes(cap.position) ? cap.position : "auto";
   st.caption.animation = ["soft", "pop", "typewriter", "word"].includes(cap.animation) ? cap.animation : "soft";
   st.caption.keywordStyle = ["big", "highlight", "box"].includes(cap.keywordStyle) ? cap.keywordStyle : "big";
+  // v2: copiar al detalle los subtítulos de una referencia (todo opcional; lo que no venga, como siempre)
+  if (num(cap.scale) != null) st.caption.scale = clampN(num(cap.scale), 0.6, 1.6);
+  if (num(cap.yPct) != null) st.caption.yPct = clampN(num(cap.yPct), 0.12, 0.86);
+  if (num(cap.weight) != null) st.caption.weight = Math.round(clampN(num(cap.weight), 100, 900) / 100) * 100;
+  if (cap.stroke && typeof cap.stroke === "object" && hex(cap.stroke.color) && num(cap.stroke.width) > 0) {
+    st.caption.stroke = { color: hex(cap.stroke.color), width: clampN(num(cap.stroke.width), 0.5, 16) };
+  }
+  if (["none", "soft", "strong"].includes(cap.shadow)) st.caption.shadow = cap.shadow;
+  if (cap.bg && typeof cap.bg === "object" && hex(cap.bg.color)) {
+    const op = num(cap.bg.opacity) ?? 0.6;
+    if (op > 0) st.caption.bg = { color: hex(cap.bg.color), opacity: clampN(op, 0.05, 1), radius: clampN(num(cap.bg.radius) ?? 10, 0, 60) };
+  }
+  if (num(cap.letterSpacing) != null) st.caption.letterSpacing = clampN(num(cap.letterSpacing), -0.1, 0.3);
+  if ([1, 2].includes(Number(cap.lines))) st.caption.lines = Number(cap.lines);
+  if (hex(cap.keywordColor)) st.caption.keywordColor = hex(cap.keywordColor);
+  if (num(cap.keywordScale) != null) st.caption.keywordScale = clampN(num(cap.keywordScale), 0.6, 2);
+  if (["same", "keyword"].includes(cap.keywordFont)) st.caption.keywordFont = cap.keywordFont;
 
   st.look = ["glass", "solid", "light"].includes(u.cards?.look) ? u.cards.look : "glass";
   if (st.look === "light") st.colors.keywordOnLight = ensureContrast(theme.gold, "#ffffff", 3);
@@ -83,6 +103,17 @@ export function resolveStyle(input) {
     dist: { 1: 0.6, 2: 1, 3: 1.45 }[lv],
     zoom: { 1: 0.55, 2: 1, 3: 1.4 }[lv],
     zoomDur: { 1: 1.2, 2: 1, 3: 0.8 }[lv],
+    // smooth = zooms suaves (actual); punch = saltos de escala al instante (reels de cortes); none = sin zooms
+    zoomStyle: ["smooth", "punch", "none"].includes(u.motion?.zoomStyle) ? u.motion.zoomStyle : "smooth",
+    zoomMax: num(u.motion?.zoomMax) != null ? clampN(num(u.motion.zoomMax), 1, 1.25) : null,
+  };
+
+  // aspecto de cine: grano, viñeta y franjas negras (UserStyle.look; nada que ver con cards.look)
+  const lk = u.look && typeof u.look === "object" ? u.look : {};
+  st.fx = {
+    grain: num(lk.grain) != null ? r3(clampN(num(lk.grain), 0, 1)) : 0,
+    vignette: num(lk.vignette) != null ? r3(clampN(num(lk.vignette), 0, 1)) : 0,
+    letterbox: lk.letterbox === true,
   };
 
   if (u.logo?.file && fs.existsSync(u.logo.file)) {
@@ -97,6 +128,18 @@ export function resolveStyle(input) {
   }
   return { style: st, theme };
 }
+
+// HEX válido («#abc», «abc», «#aabbcc») → con «#»; si no, null
+function hex(v) {
+  return typeof v === "string" && /^#?[0-9a-f]{3}([0-9a-f]{3})?$/i.test(v.trim()) ? (v.trim().startsWith("#") ? v.trim() : "#" + v.trim()) : null;
+}
+// número finito o null
+function num(v) {
+  if (v === null || v === undefined || v === "" || typeof v === "boolean") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Muelle VB con la fuerza escalada por la intensidad (con 2 queda el texto de siempre)
 export const vb = (f) => `VB(${r3(f * S().motion.spring)})`;

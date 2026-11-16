@@ -162,7 +162,8 @@ export function toPresetStyle(r, rhythm) {
     motion: { intensity: clamp(r.motion?.intensity, 1, 3, 2) | 0, zoomStyle: oneOf(r.motion?.zoomStyle, ["smooth", "punch", "none"], "smooth"), zoomMax: +clamp(r.motion?.zoomMax, 1, 1.25, 1.1).toFixed(3) },
     look: { grain: clamp(r.look?.grain, 0, 1, 0), vignette: clamp(r.look?.vignette, 0, 1, 0), letterbox: !!r.look?.letterbox },
     grade: oneOf(r.look?.grade, ["neutral", "warm", "cool", "punchy", "soft", "cinematic"], "neutral"),
-    graphics: oneOf(r.graphics, ["none", "few", "balanced", "many"], "few"),
+    // Edición limpia y cinematográfica: aunque la referencia lleve muchos gráficos, se queda en pocos (el usuario lo puede subir)
+    graphics: r.graphics === "none" ? "none" : "few",
     cards: { look: oneOf(r.cards?.look, ["glass", "solid", "light"], "glass") },
     music: oneOf(r.music, ["lofi", "synthwave", "none", "auto"], "auto"),
     rhythm: rhythm || null,
