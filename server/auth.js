@@ -55,13 +55,19 @@ const OPEN = [/^\/api\/(auth-state|setup|login|logout)$/, /^\/api\/worker\//, /^
 export function registerAuth(app) {
   if (!IS_SERVER) return;
 
-  app.get("/api/auth-state", (req, res) => res.json({ email: OWNER, needsSetup: !owner(), loggedIn: !!sessionOf(req), persistent: PERSISTENT }));
+  // ¿Puede tu PC devolver la cuenta? «none» = tu PC ha dicho que no tiene copia de ella (hay que crearla)
+  let noBackupAt = 0;
+  app.get("/api/auth-state", (req, res) => res.json({
+    email: OWNER, needsSetup: !owner(), loggedIn: !!sessionOf(req), persistent: PERSISTENT,
+    recover: !owner() && Date.now() - noBackupAt < 30 * 60e3 ? "none" : null,
+  }));
 
   // Servidor recién borrado: tu PC le devuelve tu cuenta (la misma contraseña), su clave y la de las sesiones,
   // para que solo tengas que entrar (o ni eso: la sesión abierta vuelve a valer). Solo mientras no haya cuenta,
   // igual que la pantalla de «primera vez».
   app.post("/api/worker/claim", (req, res) => {
     if (owner()) return res.status(409).json({ error: "El servidor ya tiene cuenta." });
+    if (req.body?.none) { noBackupAt = Date.now(); return res.json({ ok: true, noted: true }); }
     const o = req.body?.owner, token = String(req.body?.token || "");
     if (!o || o.email !== OWNER || typeof o.salt !== "string" || typeof o.hash !== "string" || token.length < 20) return res.status(400).json({ error: "Copia incompleta." });
     setSetting("auth:owner", { email: o.email, salt: o.salt, hash: o.hash, ver: Number(o.ver) || 1, at: o.at || new Date().toISOString() });

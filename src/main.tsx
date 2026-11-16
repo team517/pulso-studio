@@ -23,6 +23,7 @@ function Gate() {
   const [err, setErr] = useState("");
   const [firstTime, setFirstTime] = useState(false);   // crear la contraseña (solo si de verdad es la primera vez)
   const [waiting, setWaiting] = useState(false);       // entraste mientras tu PC recupera la cuenta
+  const [noCopy, setNoCopy] = useState(false);         // tu PC no tenía copia de la cuenta: hay que crearla
 
   const check = () => authState().then((s) => {
     if (s.loggedIn) { setSt("ok"); return; }
@@ -43,6 +44,17 @@ function Gate() {
     return () => clearInterval(t);
   }, [recovering]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Tu PC no tiene copia de la cuenta (o no responde en 15 s): se pasa a crearla con lo que ya escribiste
+  const giveUp = () => { setWaiting(false); setNoCopy(true); setFirstTime(true); setErr(""); };
+  useEffect(() => {
+    if (waiting && st && st !== "ok" && st.needsSetup && st.recover === "none") giveUp();
+  }, [waiting, st]);
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setTimeout(giveUp, 15000);
+    return () => clearTimeout(t);
+  }, [waiting]);
+
   // Si pulsaste «Entrar» mientras tanto, se entra solo en cuanto vuelve la cuenta
   useEffect(() => {
     if (!waiting || !st || st === "ok" || st.needsSetup) return;
@@ -60,7 +72,10 @@ function Gate() {
       if (password.length < 8) return setErr("Usa al menos 8 caracteres.");
       if (password !== repeat) return setErr("Las dos contraseñas no coinciden.");
     }
-    if (st.needsSetup && !creating) { setWaiting(true); return; }
+    if (st.needsSetup && !creating) {
+      if (st.recover === "none") { giveUp(); return; }
+      setWaiting(true); return;
+    }
     setBusy(true);
     try {
       if (creating) await setup(password, remember);
@@ -82,17 +97,18 @@ function Gate() {
         {fail ? <p className="gate__err">{fail}</p> : !st ? <p className="muted">Comprobando tu acceso…</p> : (
           <>
             <p>{creating ? <>Crea la contraseña de <b>{st.email}</b>. Solo esta cuenta puede entrar.</> : "Entra con tu cuenta."}</p>
+            {creating && noCopy && <p className="gate__wait">Tu PC no tenía copia de tu cuenta (se perdió antes de que existiera la copia). Repite la contraseña para crearla: <b>será la última vez</b>, a partir de ahora tu PC la guarda.</p>}
             <input className="input" type="email" autoComplete="username" placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} readOnly={creating} required />
             <input className="input" type="password" autoComplete={creating ? "new-password" : "current-password"} placeholder={creating ? "Nueva contraseña" : "Contraseña"} value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
-            {creating && <input className="input" type="password" autoComplete="new-password" placeholder="Repite la contraseña" value={repeat} onChange={(e) => setRepeat(e.target.value)} required />}
+            {creating && <input className="input" type="password" autoComplete="new-password" placeholder="Repite la contraseña" value={repeat} onChange={(e) => setRepeat(e.target.value)} required autoFocus={noCopy} />}
             <label className="gate__remember"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Mantener la sesión iniciada</label>
             {err && <p className="gate__err">{err}</p>}
             {st.needsSetup && !creating && (waiting
-              ? <p className="gate__wait">Tu PC está devolviendo tu cuenta al servidor. Entrarás solo en cuanto termine (unos segundos; tu PC tiene que estar encendido).</p>
-              : <p className="gate__wait">El servidor se acaba de reiniciar: tu PC le está devolviendo tu cuenta. Entra con tu contraseña de siempre.</p>)}
+              ? <p className="gate__wait">Tu PC está devolviendo tu cuenta al servidor. Entrarás solo en cuanto termine (unos segundos).</p>
+              : <p className="gate__wait">El servidor se acaba de reiniciar: tu PC le devuelve tu cuenta. Entra con tu contraseña de siempre.</p>)}
             <button className="btn btn--primary" type="submit" disabled={busy || waiting}>{busy || waiting ? "Un momento…" : creating ? "Crear contraseña y entrar" : "Entrar"}</button>
             {st.needsSetup && (
-              <button type="button" className="gate__link" onClick={() => { setFirstTime((v) => !v); setWaiting(false); setErr(""); }}>
+              <button type="button" className="gate__link" onClick={() => { setFirstTime((v) => !v); setWaiting(false); setNoCopy(false); setErr(""); }}>
                 {creating ? "Ya tengo cuenta: entrar" : "¿Es la primera vez que usas Pulso Studio? Crear contraseña"}
               </button>
             )}

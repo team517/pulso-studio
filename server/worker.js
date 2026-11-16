@@ -49,6 +49,7 @@ function pair() {
   if (pairing) return pairing;
   pairing = (async () => {
     for (;;) {
+      if (await claim()) return;
       let start;
       try {
         const r = await fetch(`${SERVER}/api/worker/pair/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: PC_NAME }), signal: AbortSignal.timeout(20e3) });
@@ -87,9 +88,13 @@ class Unauthorized extends Error {}
 /** Servidor recién borrado: le devuelve tu cuenta y las claves desde la copia (sin que tengas que hacer nada). */
 async function claim() {
   let have = null;
-  try { have = JSON.parse(readFileSync(join(DATA, "copia-servidor", "copia.json"), "utf8")); } catch { return false; }
+  try { have = JSON.parse(readFileSync(join(DATA, "copia-servidor", "copia.json"), "utf8")); } catch { have = null; }
   const a = have?.auth;
-  if (!a?.owner || !(a.token || TOKEN)) return false;
+  if (!a?.owner || !(a.token || TOKEN)) {
+    // Sin copia de la cuenta: se avisa al panel para que la web no se quede esperando
+    await fetch(`${SERVER}/api/worker/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ none: true }), signal: AbortSignal.timeout(15e3) }).catch(() => {});
+    return false;
+  }
   try {
     const r = await fetch(`${SERVER}/api/worker/claim`, {
       method: "POST", headers: { "content-type": "application/json" },
