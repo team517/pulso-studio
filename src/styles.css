@@ -281,3 +281,7 @@ a { color: var(--accent-2); text-decoration: none; }
 .lib-folders__tools { display: inline-flex; gap: 4px; margin-left: auto; }
 .lib-move { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .lib-move select { background: var(--bg); color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 6px; font-size: 12px; height: 24px; padding: 0 4px; max-width: 160px; }
+
+.gate__wait { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-3); text-align: center; }
+.gate__link { background: none; border: 0; color: var(--ink-3); font-size: 12.5px; cursor: pointer; text-decoration: underline; padding: 2px; }
+.gate__link:hover { color: var(--ink-2); }

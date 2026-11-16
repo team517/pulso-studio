@@ -5,7 +5,7 @@ import { join, basename } from "node:path";
 import { existsSync, renameSync, rmSync, statSync, readdirSync } from "node:fs";
 import { db, DIRS, now, row, getSetting, setSetting } from "./db.js";
 import { randomBytes, randomInt } from "node:crypto";
-import { IS_SERVER, BASE } from "./config.js";
+import { IS_SERVER, BASE, getSecret } from "./config.js";
 import { isWorker } from "./auth.js";
 import { setJob, setItem } from "./autoedit/pipeline.js";
 import { STYLE_DIR } from "./style.js";
@@ -142,7 +142,9 @@ export function registerWorkerRoutes(app, wrap) {
       }
     }
     const empty = !CONTENT_TABLES.some((t) => hasTable(t) && db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
-    res.json({ server: getSetting("server:id", null), empty, tables, files });
+    // También tu cuenta y las claves, para devolverlas si el servidor se borra (se guardan solo en tu PC)
+    const auth = { owner: getSetting("auth:owner", null), token: getSetting("worker:token", ""), secret: getSecret() };
+    res.json({ server: getSetting("server:id", null), empty, tables, files, auth });
   }));
   app.get("/api/worker/backup/file/:dir/:name", guard, (req, res) => {
     const base = fileDirs()[req.params.dir];

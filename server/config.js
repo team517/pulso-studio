@@ -31,7 +31,15 @@ function loadSecret() {
     return s;
   } catch { return randomBytes(32).toString("base64url"); }
 }
-export const SECRET = loadSecret();
+let SECRET = loadSecret();
+export const getSecret = () => SECRET;
+/** Tu PC devuelve la clave de antes (servidor recién borrado): las sesiones abiertas vuelven a valer. */
+export function restoreSecret(s) {
+  if (process.env.STUDIO_SECRET || !s || typeof s !== "string" || s.length < 20) return false;
+  SECRET = s;
+  try { writeFileSync(join(DATA, "secret.key"), s); } catch { /* se queda en memoria */ }
+  return true;
+}
 
 
 export const sign = (text) => createHmac("sha256", SECRET).update(text).digest("base64url");

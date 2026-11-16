@@ -8,7 +8,7 @@ export const insideFrame = (() => { try { return window.self !== window.top; } c
 
 const nativeFetch = window.fetch.bind(window);
 
-export type AuthState = { email: string; needsSetup: boolean; loggedIn: boolean };
+export type AuthState = { email: string; needsSetup: boolean; loggedIn: boolean; persistent?: boolean | null };
 
 export async function authState(): Promise<AuthState> {
   const r = await nativeFetch(`${BASE}/api/auth-state`, { credentials: "same-origin", cache: "no-store" });

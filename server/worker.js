@@ -44,7 +44,7 @@ function openBrowser(url) {
 }
 
 /** Conectar el PC: pide un código al panel, abre la web y espera a que pulses «Conectar». */
-let pairing = null;
+let pairing = null, opened = false;
 function pair() {
   if (pairing) return pairing;
   pairing = (async () => {
@@ -58,7 +58,8 @@ function pair() {
       console.log(`\n  Conectar este PC (${PC_NAME}) con Pulso Studio`);
       console.log(`  Se ha abierto la web: pulsa «Conectar este PC». Código: ${start.code}`);
       console.log(`  Si no se abre, entra en: ${start.url}\n`);
-      openBrowser(start.url);
+      if (!opened) { openBrowser(start.url); opened = true; }
+      else console.log("  (También puedes conectarlo desde el aviso que sale arriba en la web.)");
       const until = Date.now() + 18 * 60e3;
       while (Date.now() < until) {
         await sleep(3000);
@@ -83,6 +84,28 @@ function pair() {
 
 class Unauthorized extends Error {}
 
+/** Servidor recién borrado: le devuelve tu cuenta y las claves desde la copia (sin que tengas que hacer nada). */
+async function claim() {
+  let have = null;
+  try { have = JSON.parse(readFileSync(join(DATA, "copia-servidor", "copia.json"), "utf8")); } catch { return false; }
+  const a = have?.auth;
+  if (!a?.owner || !(a.token || TOKEN)) return false;
+  try {
+    const r = await fetch(`${SERVER}/api/worker/claim`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ owner: a.owner, token: a.token || TOKEN, secret: a.secret }), signal: AbortSignal.timeout(20e3),
+    });
+    if (!r.ok) return false;
+    TOKEN = a.token || TOKEN;
+    saveCfg();
+    try { beat.postMessage({ token: TOKEN, now: true }); } catch { /* aún no hay hilo */ }
+    log("✓ El panel había empezado de cero: le he devuelto tu cuenta y la conexión de este PC.");
+    return true;
+  } catch { return false; }
+}
+/** Volver a conectar: primero se intenta sin ti (copia); si no, con un clic en la web. */
+const reconnect = async () => { if (!(await claim())) await pair(); };
+
 // ¿Vale la clave que tenemos? Si no, se conecta con un clic en la web
 async function tokenWorks() {
   if (!TOKEN) return false;
@@ -99,7 +122,7 @@ beat.unref();
 beat.on("message", (m) => { if (m.status === 401 && !pairing) log("El panel ya no reconoce este PC: hay que conectarlo otra vez."); });
 beat.on("error", (e) => log("Aviso de vida:", e.message));
 
-if (!(await tokenWorks())) await pair();
+if (!(await tokenWorks())) await reconnect();
 
 
 async function call(method, path, body, { raw = false, timeout = 60e3 } = {}) {
@@ -429,7 +452,7 @@ function backupCycle() {
       const path = join(BK, dir);
       if (existsSync(path)) for (const name of readdirSync(path)) if (!there.has(`${dir}/${name}`)) rmSync(join(path, name), { force: true });
     }
-    writeBackup({ server: b.server, at: now(), tables: b.tables });
+    writeBackup({ server: b.server, at: now(), tables: b.tables, auth: b.auth || have?.auth || null });
     if (n) log(`Copia de seguridad al día en este PC (${n} archivos nuevos)`);
   })().catch((e) => { if (e instanceof Unauthorized) throw e; log("No se pudo hacer la copia:", e.message); }).finally(() => { backingUp = null; });
   return backingUp;
@@ -448,7 +471,7 @@ for (;;) {
     if (Date.now() - lastBackup > 3 * 60e3) { lastBackup = Date.now(); await backupCycle(); }
     task = await call("GET", "/api/worker/next");
   } catch (e) {
-    if (e instanceof Unauthorized) { log("El panel ya no reconoce este PC: lo conecto otra vez."); await pair(); lastBackup = 0; continue; }
+    if (e instanceof Unauthorized) { log("El panel ya no reconoce este PC: lo conecto otra vez."); await reconnect(); lastBackup = 0; continue; }
     log("Sin conexión con el panel:", e.message);
     await sleep(20e3);
     continue;
@@ -460,7 +483,7 @@ for (;;) {
     else if (task.type === "analyze") await doAnalyze();
     else if (task.type === "preset") await doPreset(task);
   } catch (e) {
-    if (e instanceof Unauthorized) { await pair(); continue; }
+    if (e instanceof Unauthorized) { await reconnect(); continue; }
     log("Fallo:", e.message);
     if (task.type === "job") await call("POST", `/api/worker/jobs/${task.job.id}/state`, { job: { status: "error", error: String(e.message).slice(0, 800) }, items: [] }).catch(() => {});
     if (task.type === "transcribe") await call("POST", `/api/worker/media/${task.media.id}/transcript`, { status: "error: " + e.message.slice(0, 300) }).catch(() => {});

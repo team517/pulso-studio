@@ -2,8 +2,8 @@
 // La contraseña la crea el propio dueño la primera vez que abre la web (nunca está en el código ni en EasyPanel):
 // se guarda cifrada (scrypt) en la base de datos. La sesión dura 180 días si marcas «Mantener la sesión».
 import { scryptSync, randomBytes } from "node:crypto";
-import { IS_SERVER, BASE, WORKER_TOKEN, sign, safeEqual, checkSignedPath } from "./config.js";
-import { getSetting, setSetting } from "./db.js";
+import { IS_SERVER, BASE, WORKER_TOKEN, sign, safeEqual, checkSignedPath, restoreSecret } from "./config.js";
+import { getSetting, setSetting, PERSISTENT } from "./db.js";
 
 const COOKIE = "ps_s";
 export const OWNER = String(process.env.STUDIO_OWNER || "team@onepulso.online").trim().toLowerCase();
@@ -55,7 +55,21 @@ const OPEN = [/^\/api\/(auth-state|setup|login|logout)$/, /^\/api\/worker\//, /^
 export function registerAuth(app) {
   if (!IS_SERVER) return;
 
-  app.get("/api/auth-state", (req, res) => res.json({ email: OWNER, needsSetup: !owner(), loggedIn: !!sessionOf(req) }));
+  app.get("/api/auth-state", (req, res) => res.json({ email: OWNER, needsSetup: !owner(), loggedIn: !!sessionOf(req), persistent: PERSISTENT }));
+
+  // Servidor recién borrado: tu PC le devuelve tu cuenta (la misma contraseña), su clave y la de las sesiones,
+  // para que solo tengas que entrar (o ni eso: la sesión abierta vuelve a valer). Solo mientras no haya cuenta,
+  // igual que la pantalla de «primera vez».
+  app.post("/api/worker/claim", (req, res) => {
+    if (owner()) return res.status(409).json({ error: "El servidor ya tiene cuenta." });
+    const o = req.body?.owner, token = String(req.body?.token || "");
+    if (!o || o.email !== OWNER || typeof o.salt !== "string" || typeof o.hash !== "string" || token.length < 20) return res.status(400).json({ error: "Copia incompleta." });
+    setSetting("auth:owner", { email: o.email, salt: o.salt, hash: o.hash, ver: Number(o.ver) || 1, at: o.at || new Date().toISOString() });
+    setSetting("worker:token", token);
+    restoreSecret(req.body?.secret);
+    console.log("[auth] Cuenta recuperada desde tu PC");
+    res.json({ ok: true });
+  });
 
   // Primera vez: el dueño crea su contraseña (solo se puede mientras no exista ninguna)
   app.post("/api/setup", (req, res) => {
