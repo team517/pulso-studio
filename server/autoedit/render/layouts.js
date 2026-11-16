@@ -93,3 +93,58 @@ export function layoutGeometry(layout, W, H) {
     types: ALL, maxSlot: 99,
   };
 }
+
+// ─────────────── estilo del usuario: posición de subtítulos y logo ───────────────
+// pos: "auto" | "high" | "low"; logo: { position, size (fracción del ancho), aspect (alto/ancho) } | null
+export function applyStyleGeometry(geo, pos, logo) {
+  const g = JSON.parse(JSON.stringify(geo));
+  const vertical = g.H > g.W && g.frame.r === 0;
+  if (pos === "high" || pos === "low") {
+    const top = g.layout === "reference" ? g.cap.y : g.slot.y; // primera línea libre bajo la barbilla
+    if (g.layout === "reference" && pos === "low") {
+      // como la caja «chest» del contrato: tarjetas pegadas a la barbilla y subtítulos debajo
+      g.slot = { ...g.slot, y: top, h: 1370 - top };
+      g.cap = { ...g.cap, y: 1395, h: 145 };
+    } else if (g.layout === "headline" && pos === "high") {
+      g.cap = { ...g.cap, y: top, h: 120 };
+      g.slot = { ...g.slot, y: top + 150, h: 1540 - (top + 150) };
+    } else if (g.layout === "minimal") {
+      g.cap = pos === "high" ? { ...g.cap, y: 1065, h: 300 } : { ...g.cap, y: 1240, h: 300 };
+    } else if (g.layout === "horizontal" && pos === "high") {
+      g.cap = { ...g.cap, y: 320, h: 190 };
+      g.slot = { ...g.slot, y: 530, h: 480 };
+    }
+    // framed: los subtítulos ya van fuera del marco; «high»/«low» se quedan como «auto»
+  }
+  if (logo) {
+    const W = g.W, H = g.H;
+    let w = Math.round(logo.size * W), h = Math.round(w * logo.aspect);
+    // zona permitida y caja de la cara que nunca se tapa
+    let area, face;
+    if (vertical) { area = { x0: 60, y0: 230, x1: W - 140, y1: H - 380 }; face = { x0: 290, y0: 230, x1: 790, y1: 1000 }; }
+    else if (g.layout === "horizontal") { area = { x0: 30, y0: 30, x1: W - 30, y1: H - 30 }; const f = g.frame; face = { x0: f.x + f.w * 0.2, y0: f.y, x1: f.x + f.w * 0.8, y1: f.y + f.h * 0.62 }; }
+    else { area = { x0: 24, y0: 24, x1: W - 24, y1: H - 24 }; const f = g.frame; face = { x0: f.x + f.w * 0.22, y0: f.y, x1: f.x + f.w * 0.78, y1: f.y + f.h * 0.72 }; }
+    const left = logo.position.endsWith("left"), topPos = logo.position.startsWith("top");
+    const place = () => ({ x: left ? area.x0 : area.x1 - w, y: topPos ? area.y0 : area.y1 - h, w, h });
+    const hits = (b, r) => b.x < r.x1 && b.x + b.w > r.x0 && b.y < r.y1 && b.y + b.h > r.y0;
+    let box = place();
+    // más pequeño hasta que no toque la cara (mínimo 6 % del ancho)
+    while (hits(box, face) && w > W * 0.06) { w = Math.round(w * 0.9); h = Math.round(w * logo.aspect); box = place(); }
+    if (hits(box, face)) { // aún toca (logo muy alto): se baja/sube fuera de la cara
+      box.y = topPos ? Math.min(area.y1 - h, face.y1 + 20) : box.y;
+    }
+    g.logo = box;
+    // lo que comparte franja con el logo se estrecha por los dos lados (sigue centrado)
+    const gap = 18;
+    for (const k of ["title", "slot", "cap"]) {
+      const r = g[k];
+      if (!r) continue;
+      const overlapY = r.y < box.y + box.h && r.y + r.h > box.y;
+      const overlapX = r.x < box.x + box.w && r.x + r.w > box.x;
+      if (!overlapY || !overlapX) continue;
+      const need = left ? box.x + box.w + gap - r.x : r.x + r.w - (box.x - gap);
+      if (need > 0 && r.w - 2 * need > 300) g[k] = { ...r, x: r.x + need, w: r.w - 2 * need };
+    }
+  }
+  return g;
+}

@@ -61,7 +61,26 @@ export const ZOOMS = [
 ];
 
 
-export function fixture(layout, workDir, { matte = true } = {}) {
+// Estilo de usuario de prueba: fuentes de Windows como «fuente subida», paleta propia, tarjetas claras,
+// intensidad 3 y un logo generado con ffmpeg (makeLogo). Para framed, otra variante de subtítulos.
+export function testStyle(layout) {
+  const F = "C:/Windows/Fonts/";
+  const base = {
+    fonts: { caption: { family: "Georgia", file: F + "georgiab.ttf", weight: 700 }, keyword: { family: "Impact", file: F + "impact.ttf" }, title: { family: "Georgia", file: F + "georgiab.ttf", weight: 700 } },
+    colors: { accent: "#FF5A36", accent2: "#FF9F1C", keyword: "#12B886", caption: "#FFFFFF", bg: "#101418" },
+    caption: { size: "l", uppercase: true, position: "auto", animation: "pop", keywordStyle: "box" },
+    cards: { look: "light" },
+    motion: { intensity: 3 },
+    logo: { file: path.join(HERE, "out", "plate", "logo.png"), position: "top-right", size: 0.14 },
+  };
+  if (layout === "framed") {
+    base.caption = { size: "m", uppercase: false, position: "auto", animation: "typewriter", keywordStyle: "highlight" };
+    base.logo = { ...base.logo, position: "bottom-left", size: 0.12 };
+  }
+  return base;
+}
+
+export function fixture(layout, workDir, { matte = true, style = false } = {}) {
   const [W, H, captionStyle] = SIZES[layout];
   const { caps, words } = buildCaptions();
   const plate = path.join(HERE, "out", "plate", "plate.mp4"), mt = path.join(HERE, "out", "plate", "matte.mp4");
@@ -73,5 +92,6 @@ export function fixture(layout, workDir, { matte = true } = {}) {
     graphics: GRAPHICS, zooms: ZOOMS, captionStyle,
     theme: { accent: "#2F8BFF", accent2: "#6E58F1", gold: "#F2C84B", bg: "#070B1A", red: "#FF4D5E" },
     hideCaptionsDuring: [[7.0, 8.8]],
+    ...(style ? { style: testStyle(layout) } : {}),
   };
 }

@@ -7,11 +7,13 @@ import { SLOT_BUILDERS, SPRING, graphicsCss, buildScene, bigWordSize } from "./g
 import { buildCaptions } from "./captions.js";
 import { esc, fitWrap, r2, r3, rgba, clamp } from "./text.js";
 import { MAX_ZOOM } from "./layouts.js";
+import { S, IN as IN_, vb, dist } from "./style.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = path.join(HERE, "assets");
 const NL = "\n";
-const IN = "duration: 1.1, ease: VB(0.07)";
+// la fuerza del rebote sale del estilo (intensidad 2 = el texto de siempre)
+const IN = { toString: () => IN_() };
 // piezas que no son cristal y se van con desenfoque al salir
 const XB = [".tx", ".bdg", ".ringsvg", ".num", ".slab", ".dlab", ".clab", ".il", ".halo", ".pt", ".ck", ".rt", ".kick", ".big"];
 
@@ -29,7 +31,11 @@ function copyAssets(dir) {
   fs.mkdirSync(path.join(dir, "compositions"), { recursive: true });
   for (const f of fs.readdirSync(path.join(ASSETS, "fonts"))) fs.copyFileSync(path.join(ASSETS, "fonts", f), path.join(dir, "assets", "fonts", f));
   fs.copyFileSync(path.join(ASSETS, "gsap.min.js"), path.join(dir, "assets", "gsap.min.js"));
+  for (const f of S().files) fs.copyFileSync(f.from, path.join(dir, "assets", "fonts", f.to));
+  if (S().logo) fs.copyFileSync(S().logo.file, path.join(dir, "assets", "logo" + S().logo.ext));
 }
+
+const fontsCss = () => FONTS + S().faces.map((f) => "\n        " + f).join("");
 
 // Enlace duro (rápido) o copia
 export function linkOrCopy(src, dst) {
@@ -46,7 +52,7 @@ function composition(id, rootId, W, H, D, css, body, script, tlName) {
 <html lang="es"><head><meta charset="UTF-8" /></head>
   <body>
     <template>
-      <style>${FONTS}${css}
+      <style>${fontsCss()}${css}
       </style>
       <div id="${rootId}" data-composition-id="${id}" data-width="${W}" data-height="${H}" data-duration="${r3(D)}">
 ${body}
@@ -139,7 +145,7 @@ export function hiddenRanges(input, geo, plan) {
 function zoomScript(input, geo) {
   const D = input.duration, out = [];
   const punchy = geo.layout === "minimal";
-  const zs = [...(input.zooms || [])].map((z) => ({ t: clamp(+z.t || 0, 0, D), to: clamp(+z.to || 1, 1, MAX_ZOOM), dur: Math.max(0.3, +z.dur || 1.2), ease: z.ease }))
+  const zs = [...(input.zooms || [])].map((z) => ({ t: clamp(+z.t || 0, 0, D), to: clamp(1 + ((+z.to || 1) - 1) * S().motion.zoom, 1, MAX_ZOOM), dur: Math.max(0.3, (+z.dur || 1.2) * S().motion.zoomDur), ease: z.ease }))
     .sort((a, b) => a.t - b.t);
   let cur = 1;
   if (!zs.length || zs[0].t >= 1.5) { out.push(`tl.fromTo("#zoom", { scale: 1.06 }, { scale: 1, duration: 1.4, ease: "power3.out" }, 0);`); }
@@ -167,16 +173,18 @@ export function buildBehindProject(input, words, dir) {
     const id = `b${i}`, s = g.start - t0, e = g.end - t0;
     const box = { x: 70 * k, y: 190 * k, w: 940 * k, h: 520 * k };
     const fs_ = bigWordSize(g.text, box.w, box.h, 420 * k);
+    const yIn = r3(dist(70) * k);
     body.push(`        <div id="${id}" class="bh clip" data-start="${r3(s)}" data-duration="${r3(e - s)}" data-track-index="1" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><div class="in"><div class="big" style="font-size:${fs_}px">${esc(String(g.text).toUpperCase())}</div></div></div>`);
-    js.push(`btl.fromTo("#${id} > .in", { opacity: 0, scale: 1.25, y: ${70 * k} }, { opacity: 1, scale: 1, y: 0, ${IN} }, ${r3(s)});`);
+    js.push(`btl.fromTo("#${id} > .in", { opacity: 0, scale: 1.25, y: ${yIn} }, { opacity: 1, scale: 1, y: 0, ${IN} }, ${r3(s)});`);
     if (g.end < input.duration - 0.05) js.push(`btl.fromTo("#${id} > .in", { opacity: 1, scale: 1 }, { opacity: 0, scale: .96, duration: 0.2, ease: "power2.in", immediateRender: false }, ${r3(e - 0.2)});`);
   });
   const G = input.theme.gold;
+  const fK = S().fonts.keyword;
   const css = `
         #behind-root { position: absolute; inset: 0; }
         #behind-root .bh { position: absolute; display: flex; align-items: center; justify-content: center; }
         #behind-root .in { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
-        #behind-root .big { font-family: "Anton", sans-serif; line-height: .92; letter-spacing: .01em; white-space: nowrap; padding: .14em .04em .02em;
+        #behind-root .big { font-family: ${fK.user ? fK.css : '"Anton", sans-serif'}; line-height: .92; letter-spacing: .01em; white-space: nowrap; padding: .14em .04em .02em;
               background: linear-gradient(180deg, #fff6d8 0%, ${G} 52%, ${shadeHex(G, -0.25)} 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
               filter: drop-shadow(0 0 ${30 * k}px ${rgba(G, 0.45)}) drop-shadow(0 ${12 * k}px ${20 * k}px rgba(0,0,0,.45)); }`;
   write(path.join(dir, "compositions", "behind.html"), composition("behind", "behind-root", W, H, D, css, body.join(NL), js, "btl"));
@@ -205,9 +213,9 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
   if (hook) {
     const T = geo.title, band = !!T.band, padX = band ? 34 : 0;
     const raw = String(hook.title || "");
-    const tf = fitWrap(raw.replace(/\*/g, ""), "geist", T.w - padX * 2, T.lines, T.maxSize, 30, -0.035);
+    const tf = fitWrap(raw.replace(/\*/g, ""), S().fonts.title.key, T.w - padX * 2, T.lines, T.maxSize, 30, -0.035);
     const subSize = Math.min(36, Math.round(tf.size * 0.5));
-    const sf = hook.subtitle ? fitWrap(hook.subtitle, "geist", T.w - padX * 2, 2, subSize, 20) : null;
+    const sf = hook.subtitle ? fitWrap(hook.subtitle, S().fonts.title.key, T.w - padX * 2, 2, subSize, 20) : null;
     let gold = false;
     const words = raw.split(/\s+/).filter(Boolean).map((w) => {
       const open = w.startsWith("*"), close = w.endsWith("*");
@@ -257,7 +265,7 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
       + `<div class="sc" style="transform:scale(${scale});transform-origin:${origin}"><div class="in">${built.html}</div></div></div>`);
     const sel = `#${id} > .sc > .in`;
     const inDur = r3(Math.min(1.1, Math.max(0.5, e - s - 0.25)));
-    gjs.push(`gtl.fromTo("${sel}", { y: 70, scale: .9 }, { y: 0, scale: 1, duration: ${inDur}, ease: VB(0.07) }, ${r3(s)});`);
+    gjs.push(`gtl.fromTo("${sel}", { y: ${dist(70)}, scale: ${S().motion.dist === 1 ? ".9" : r3(1 - 0.1 * S().motion.dist)} }, { y: 0, scale: 1, duration: ${inDur}, ease: ${vb(0.07)} }, ${r3(s)});`);
     if (!built.noFadeIn) gjs.push(`gtl.fromTo("#${id} .e0", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, ${r3(s)});`);
     if (built.html.includes('class="sweep"')) gjs.push(`gtl.fromTo("#${id} .sweep", { x: -200 }, { x: 1000, duration: 0.9, ease: "power2.inOut" }, ${r3(s + 0.3)});`);
     if (e < D - 0.05) {
@@ -273,7 +281,7 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
       const id = `w${i}`, b = geo.overlayWord, s = g.start, e = g.end;
       const fz = bigWordSize(g.text, b.w, b.h, b.max);
       gbody.push(`        <div id="${id}" class="ow clip" data-start="${r3(s)}" data-duration="${r3(e - s)}" data-track-index="2" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"><div class="in"><div class="big" style="font-size:${fz}px">${esc(String(g.text).toUpperCase())}</div></div></div>`);
-      gjs.push(`gtl.fromTo("#${id} > .in", { opacity: 0, scale: 1.25, y: 40 }, { opacity: 1, scale: 1, y: 0, ${IN} }, ${r3(s)});`);
+      gjs.push(`gtl.fromTo("#${id} > .in", { opacity: 0, scale: 1.25, y: ${dist(40)} }, { opacity: 1, scale: 1, y: 0, ${IN} }, ${r3(s)});`);
       if (e < D - 0.05) gjs.push(`gtl.fromTo("#${id} > .in", { opacity: 1, scale: 1, filter: "blur(0px)" }, { opacity: 0, scale: .96, filter: "blur(10px)", duration: 0.2, ease: "power2.in", immediateRender: false }, ${r3(e - 0.2)});`);
       addSfx(s - 0.02, "hit");
     });
@@ -324,6 +332,13 @@ export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
   body.push(`      <div id="frame"><div id="zoom"><video id="base" class="clip" src="assets/base.mp4" muted playsinline data-start="0" data-duration="${r3(D)}" data-track-index="0"></video></div></div>`);
   body.push(host("graphics", "graphics.html", 2, W, H, D));
   body.push(host("captions", "captions.html", 3, W, H, D, ' data-track-kind="captions"'));
+  if (S().logo && geo.logo) {
+    const L = geo.logo;
+    head += `
+      #logo { position: absolute; left: ${L.x}px; top: ${L.y}px; width: ${L.w}px; height: ${L.h}px; object-fit: contain; z-index: 20; filter: drop-shadow(0 4px 14px rgba(0,0,0,.35)); }`;
+    body.push(`      <img id="logo" src="assets/logo${S().logo.ext}" alt="" />`);
+    script.push(`tl.fromTo("#logo", { opacity: 0 }, { opacity: 0.92, duration: 0.5, ease: "power2.out" }, 0.2);`);
+  }
   write(path.join(dir, "index.html"), indexHtml({ W, H, D, bg: geo.bg ? theme.bg : "#000", head, body: body.join(NL), script }));
 
   // efectos: ordenados y sin duplicados muy juntos

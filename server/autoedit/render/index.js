@@ -8,7 +8,8 @@ import path from "node:path";
 import os from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { layoutGeometry } from "./layouts.js";
+import { layoutGeometry, applyStyleGeometry } from "./layouts.js";
+import { resolveStyle, setStyle } from "./style.js";
 import { planGraphics, buildBehindProject, buildFinalProject } from "./project.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +69,16 @@ export function probe(file) {
   return { width: s.width, height: s.height, fps: n / (d || 1), pix: s.pix_fmt, codec: s.codec_name, duration: Number(j.format?.duration || 0) };
 }
 
+// alto/ancho de una imagen (logo); 1 si no se puede leer
+function imageAspect(file) {
+  if (!file || !fs.existsSync(file)) return 1;
+  try {
+    const r = spawnSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file], { encoding: "utf8", windowsHide: true });
+    const [w, h] = r.stdout.trim().split(",").map(Number);
+    return w > 0 && h > 0 ? h / w : 1;
+  } catch { return 1; }
+}
+
 function workers() {
   // ~1 Chrome por cada 2 núcleos, máx. 6 (cada uno ~300-500 MB a 1080p)
   const cores = os.cpus().length, memGb = os.totalmem() / 2 ** 30;
@@ -95,7 +106,19 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
   const input = normalize(rawInput);
   const work = path.resolve(input.workDir);
   fs.mkdirSync(work, { recursive: true });
-  const geo = layoutGeometry(input.layout, input.width, input.height);
+  // Estilo del usuario: se resuelve justo antes de cada etapa que genera HTML (síncrona), y se suelta al acabar.
+  const logoAspect = imageAspect(input.style?.logo?.file);
+  const styled = (fn) => {
+    const { style, theme } = resolveStyle(input);
+    setStyle(style);
+    try {
+      const inp = { ...input, theme };
+      let g = layoutGeometry(input.layout, input.width, input.height);
+      if (style.user) g = applyStyleGeometry(g, style.caption.position, style.logo ? { ...style.logo, aspect: logoAspect } : null);
+      return fn(inp, g);
+    } finally { setStyle(null); }
+  };
+  const geo = styled((_, g) => g);
   const hasMatte = !!(input.base.matte && fs.existsSync(input.base.matte));
   const plan = planGraphics(input, geo, hasMatte);
   const report = (f, label) => { try { onProgress(Math.max(0, Math.min(1, f)), label); } catch {} };
@@ -111,7 +134,7 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
     report(0.02, "Preparando el texto detrás de la cabeza");
     const bdir = path.join(work, "hf-behind");
     fs.rmSync(bdir, { recursive: true, force: true });
-    const { t0, t1 } = buildBehindProject(input, plan.behind, bdir);
+    const { t0, t1 } = styled((inp) => buildBehindProject(inp, plan.behind, bdir));
     const mov = path.join(work, "behind.mov");
     // pocos fotogramas: menos Chromes arrancan antes (cada uno cuesta ~2-3 s)
     const bW = String(Math.max(1, Math.min(Number(nW), Math.ceil(((t1 - t0) * 30) / 45))));
@@ -136,7 +159,7 @@ export async function renderVariant(rawInput, onProgress = () => {}) {
   report(p0, "Generando gráficos y subtítulos");
   const fdir = path.join(work, "hf");
   fs.rmSync(fdir, { recursive: true, force: true });
-  const { sfx } = buildFinalProject(input, geo, plan, baseVideo, fdir, twoStage);
+  const { sfx } = styled((inp, g) => buildFinalProject(inp, g, plan, baseVideo, fdir, twoStage));
   const raw = path.join(work, "render-raw.mp4");
   await runHf(["render", ".", "-o", raw, "--fps", "30", "--quality", "standard", "--crf", "18", "--workers", nW], fdir,
     (p) => report(p0 + p * (0.97 - p0), "Renderizando la versión"));

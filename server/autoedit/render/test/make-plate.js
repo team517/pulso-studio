@@ -38,6 +38,15 @@ export function makePlate(dir, dur = 20) {
   return { plate, matte };
 }
 
+// Logo de prueba: píldora naranja con texto blanco y fondo transparente (PNG con alfa)
+export function makeLogo(file) {
+  if (fs.existsSync(file)) return file;
+  run(["-f", "lavfi", "-i", "color=c=0xFF5A36:s=420x140,format=rgba", "-frames:v", "1", "-vf",
+    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(pow(max(0,abs(X-210)-140)/70,2)+pow((Y-70)/70,2),1),255,0)',drawtext=text='PULSO':fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2",
+    file]);
+  return file;
+}
+
 function run(args) {
   const r = spawnSync("ffmpeg", ["-v", "error", "-y", ...args], { encoding: "utf8" });
   if (r.status !== 0) throw new Error("ffmpeg: " + r.stderr);

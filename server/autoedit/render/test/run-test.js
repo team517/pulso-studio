@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { renderVariant } from "../index.js";
-import { makePlate } from "./make-plate.js";
+import { makePlate, makeLogo } from "./make-plate.js";
 import { fixture, SIZES, DUR } from "./fixture.js";
 import { SHOTS } from "./shots.js";
 
@@ -37,19 +37,20 @@ function contactSheet(video, layout, W, H) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const sheetsOnly = args.includes("--sheets-only"), noMatte = args.includes("--no-matte");
+  const sheetsOnly = args.includes("--sheets-only"), noMatte = args.includes("--no-matte"), withStyle = args.includes("--style");
   const layouts = args.filter((a) => !a.startsWith("--"));
   const list = layouts.length ? layouts : Object.keys(SIZES);
   const { plate, matte } = makePlate(path.join(OUT, "plate"), DUR);
+  if (withStyle) makeLogo(path.join(OUT, "plate", "logo.png"));
   const results = [];
   for (const layout of list) {
     const [W, H, captionStyle] = SIZES[layout];
-    const tag = layout + (noMatte ? "-nomatte" : "");
+    const tag = layout + (noMatte ? "-nomatte" : "") + (withStyle ? "-style" : "");
     const workDir = path.join(OUT, tag);
     const video = path.join(workDir, "video.mp4");
     let secs = null, sfx = null, timings = null;
     if (!sheetsOnly) {
-      const input = fixture(layout, workDir, { matte: !noMatte });
+      const input = fixture(layout, workDir, { matte: !noMatte, style: withStyle });
       const t = Date.now();
       let last = -1;
       const res = await renderVariant(input, (f, label) => {
@@ -65,7 +66,7 @@ async function main() {
     results.push({ layout: tag, secs, timings, sfx: sfx ? sfx.length : null, probe: `${pr.codec_name} ${pr.width}x${pr.height} ${pr.r_frame_rate} ${pr.pix_fmt} ${pr.nb_frames} fr`, sheet });
     console.log(results[results.length - 1]);
   }
-  fs.writeFileSync(path.join(OUT, noMatte ? "results-nomatte.json" : "results.json"), JSON.stringify(results, null, 1));
+  fs.writeFileSync(path.join(OUT, `results${noMatte ? "-nomatte" : ""}${withStyle ? "-style" : ""}.json`), JSON.stringify(results, null, 1));
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

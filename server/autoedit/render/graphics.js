@@ -2,20 +2,27 @@
 // (en px de diseño 1080) y añade al timeline las animaciones con selectores LITERALES.
 // Regla del cristal: la opacidad se anima en el propio .glass (si se anima en un padre, Chrome deja de desenfocar).
 import { icon } from "./icons.js";
-import { esc, fitLine, fitWrap, textEm, fmtNum, r2, r3, rgba, clamp } from "./text.js";
+import { esc, fitLine, fitWrap, textEm, fmtNum, r2, r3, rgba, clamp, shadeHex, ensureContrast } from "./text.js";
+import { S, IN, IN_SOFT, vb, dist } from "./style.js";
 
 export const SPRING = `const rb = (vel, fuerza, rebotes, frenado, t) => vel * fuerza * Math.sin(rebotes * t * 2 * Math.PI) / Math.exp(frenado * t);
         const VB = (fuerza = 0.12, llegada = 0.3) => (p) => { const tot = llegada + 0.8, t = p * tot; if (t < llegada) { const u = t / llegada; return u * u; } return 1 + rb(2 / llegada, fuerza, 2.5, 5, t - llegada); };`;
-const IN = "duration: 1.1, ease: VB(0.07)";
-const IN_SOFT = "duration: 1.1, ease: VB(0.045)";
+// claves de medida: texto de tarjetas (fuente «title») y cifras/palabras gigantes (fuente «keyword»)
+const FT = () => S().fonts.title.key, FK = () => S().fonts.keyword.key;
+// color del texto de las tarjetas (y su versión atenuada) según el aspecto
+const TXT = () => (S().look === "light" ? ["rgba(21,22,30,1)", "rgba(21,22,30,.4)"] : ["rgba(255,255,255,1)", "rgba(255,255,255,.5)"]);
 // Aparición con rebote: la opacidad va aparte y corta, para no pisar el fundido de salida
-const POP = (sel, t, from = "scale: 0", to = "scale: 1", ease = IN_SOFT) =>
+const POP = (sel, t, from = "scale: 0", to = "scale: 1", ease = IN_SOFT()) =>
   [`gtl.fromTo("${sel}", { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "power1.out" }, ${r3(t)});`,
    `gtl.fromTo("${sel}", { ${from} }, { ${to}, ${ease} }, ${r3(t)});`];
 const TXT_IN = (y = 14) => `{ opacity: 0, y: ${y}, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.4, ease: "power3.out" }`;
 
 // ─────────────── CSS común de los gráficos ───────────────
 export function graphicsCss(theme) {
+  return baseCss(theme) + styleCss(theme);
+}
+
+function baseCss(theme) {
   const A = theme.accent, A2 = theme.accent2, G = theme.gold, R = theme.red;
   return `
         #gfx-root { position: absolute; inset: 0; font-family: "Geist", "Rajdhani", sans-serif; color: #fff; }
@@ -175,22 +182,22 @@ const B = {};
 
 B.card = (g, c) => {
   const title = g.title || "", sub = g.subtitle || "";
-  const T = fitWrap(title, "geist", 600, 2, 52, 32, -0.02);
-  const S = sub ? fitWrap(sub, "geist", 600, 2, 32, 26) : null;
-  const tw = Math.max(...T.lines.map((l) => textEm(l, "geist") * T.size), S ? Math.max(...S.lines.map((l) => textEm(l, "geist") * S.size)) : 0);
+  const T = fitWrap(title, FT(), 600, 2, 52, 32, -0.02);
+  const S = sub ? fitWrap(sub, FT(), 600, 2, 32, 26) : null;
+  const tw = Math.max(...T.lines.map((l) => textEm(l, FT()) * T.size), S ? Math.max(...S.lines.map((l) => textEm(l, FT()) * S.size)) : 0);
   const html = `<div class="glass gp e0 card"><span class="sweep"></span><div class="itile">${icon(g.icon)}</div><div class="ctext">`
     + `<div class="ct tx" style="font-size:${T.size}px">${esc(title)}</div>`
     + (S ? `<div class="cs tx" style="font-size:${S.size}px">${esc(sub)}</div>` : "") + `</div></div>`;
   const h = Math.max(92, T.lines.length * T.size * 1.08 + (S ? S.lines.length * S.size * 1.18 + 4 : 0)) + 44;
   c.js(`gtl.fromTo("#${c.id} .tx", ${TXT_IN()}, ${r3(c.s + 0.15)});`);
-  c.js(`gtl.fromTo("#${c.id} .itile", { scale: .5, rotation: -12 }, { scale: 1, rotation: 0, ${IN_SOFT} }, ${r3(c.s + 0.08)});`);
+  c.js(`gtl.fromTo("#${c.id} .itile", { scale: .5, rotation: -12 }, { scale: 1, rotation: 0, ${IN_SOFT()} }, ${r3(c.s + 0.08)});`);
   return { html, w: Math.min(860, 22 + 92 + 24 + tw + 40), h };
 };
 
 B.checklist = (g, c) => {
   const items = (g.items || []).slice(0, 5);
-  const size = Math.min(...items.map((it) => fitLine(it.text, "geist", 600, 44, 28, -0.015)), 44);
-  const tw = Math.max(...items.map((it) => textEm(it.text, "geist") * size), g.title ? textEm(g.title.toUpperCase(), "geist", 0.16) * 26 : 0);
+  const size = Math.min(...items.map((it) => fitLine(it.text, FT(), 600, 44, 28, -0.015)), 44);
+  const tw = Math.max(...items.map((it) => textEm(it.text, FT()) * size), g.title ? textEm(g.title.toUpperCase(), FT(), 0.16) * 26 : 0);
   let html = `<div class="glass gp e0 chk"><span class="sweep"></span>` + (g.title ? `<div class="kick tx">${esc(g.title)}</div>` : "");
   items.forEach((it, k) => {
     html += `<div id="${c.id}r${k}" class="row"><span id="${c.id}k${k}" class="ck">${icon("check")}</span><span class="rt" style="font-size:${size}px">${esc(it.text)}</span></div>`;
@@ -209,13 +216,13 @@ B.checklist = (g, c) => {
 
 B.strike = (g, c) => {
   const items = (g.items || []).slice(0, 4);
-  const size = Math.min(...items.map((it) => fitLine(it.text, "geist", 700, 42, 26, -0.02)), 42);
-  const fsz = g.final ? fitLine(g.final, "geist", 700, 50, 28, -0.02) : 0;
+  const size = Math.min(...items.map((it) => fitLine(it.text, FT(), 700, 42, 26, -0.02)), 42);
+  const fsz = g.final ? fitLine(g.final, FT(), 700, 50, 28, -0.02) : 0;
   // reparto en filas (como hará el navegador con flex-wrap) para saber ancho y alto
-  const maxW = 820, pw = items.map((it) => textEm(it.text, "geist") * size + 67);
+  const maxW = 820, pw = items.map((it) => textEm(it.text, FT()) * size + 67);
   const rows = [];
   pw.forEach((w) => { const r = rows[rows.length - 1]; if (r && r.w + 14 + w <= maxW) r.w += 14 + w; else rows.push({ w }); });
-  const W = Math.ceil(Math.max(...rows.map((r) => r.w), g.final ? textEm(g.final, "geist") * fsz + 67 : 0) + 2);
+  const W = Math.ceil(Math.max(...rows.map((r) => r.w), g.final ? textEm(g.final, FT()) * fsz + 67 : 0) + 2);
   let html = `<div class="stk" style="width:${W}px">`;
   items.forEach((it, k) => {
     html += `<div id="${c.id}p${k}" class="glass gp pill"><span class="pt tx" style="font-size:${size}px">${esc(it.text)}<i id="${c.id}l${k}" class="ln"></i></span></div>`;
@@ -224,10 +231,10 @@ B.strike = (g, c) => {
   html += `</div>`;
   let last = c.s + 0.3;
   items.forEach((it, k) => {
-    c.js(`gtl.fromTo("#${c.id}p${k}", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, ${r3(c.s + k * 0.08)});`);
+    c.js(`gtl.fromTo("#${c.id}p${k}", { opacity: 0, y: ${dist(24)} }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, ${r3(c.s + k * 0.08)});`);
     const t = clamp(Math.max(it.t ?? 0, c.s + 0.5 + k * 0.22), c.s, c.e - (g.final ? 1.45 : 0.6) - (items.length - 1 - k) * 0.15);
     c.js(`gtl.fromTo("#${c.id}l${k}", { scaleX: 0 }, { scaleX: 1, duration: 0.28, ease: "power2.out" }, ${r3(t)});`);
-    c.js(`gtl.fromTo("#${c.id}p${k} .pt", { color: "rgba(255,255,255,1)" }, { color: "rgba(255,255,255,.5)", duration: 0.25, immediateRender: false }, ${r3(t + 0.05)});`);
+    c.js(`gtl.fromTo("#${c.id}p${k} .pt", { color: "${TXT()[0]}" }, { color: "${TXT()[1]}", duration: 0.25, immediateRender: false }, ${r3(t + 0.05)});`);
     c.sfx(t - 0.02, "click");
     last = Math.max(last, t);
   });
@@ -245,8 +252,8 @@ B.stat = (g, c) => {
   const value = Number(g.value) || 0;
   const dec = Number.isInteger(value) ? 0 : 1;
   const final = (g.prefix || "") + fmtNum(value, dec) + (g.suffix || "");
-  const nsz = fitLine(final, "anton", 172, 96, 36);
-  const lsz = fitLine(g.label || "", "geist", 820, 40, 28, -0.02);
+  const nsz = fitLine(final, FK(), 172, 96, 36);
+  const lsz = fitLine(g.label || "", FT(), 820, 40, 28, -0.02);
   const html = `<div class="stat"><div class="ringw"><span class="glass gp e0 ringbg"></span><i id="${c.id}h" class="halo"></i>`
     + `<svg class="ringsvg" viewBox="0 0 240 240"><circle class="rb" cx="120" cy="120" r="108"/><circle id="${c.id}rp" class="rp" cx="120" cy="120" r="108" style="stroke-dasharray:${RING} ${RING};stroke-dashoffset:${RING}"/></svg>`
     + `<div id="${c.id}n" class="num" style="font-size:${nsz}px">${esc((g.prefix || "") + "0" + (g.suffix || ""))}</div></div>`
@@ -264,13 +271,13 @@ B.stat = (g, c) => {
   c.js(`gtl.fromTo("#${c.id}n", { scale: 1 }, { scale: 1.08, duration: 0.16, yoyo: true, repeat: 1, ease: "power2.out" }, ${r3(t0 + dur - 0.05)});`);
   if (g.label) c.js(`gtl.fromTo("#${c.id} .slab", ${TXT_IN()}, ${r3(c.s + 0.35)});`);
   c.sfx(t0 + dur - 0.04, "sparkle");
-  const w = Math.max(240, g.label ? textEm(g.label, "geist") * lsz : 0);
+  const w = Math.max(240, g.label ? textEm(g.label, FT()) * lsz : 0);
   return { html, w: Math.min(860, w), h: 240 + (g.label ? 14 + lsz * 1.3 : 0) };
 };
 
 B.days = (g, c) => {
   const days = (g.days && g.days.length ? g.days : ["L", "M", "X", "J", "V"]).slice(0, 7);
-  const lsz = g.label ? fitLine(g.label, "geist", 820, 36, 28) : 0;
+  const lsz = g.label ? fitLine(g.label, FT(), 820, 36, 28) : 0;
   let html = `<div class="days"><div class="drow">`;
   days.forEach((d, k) => {
     html += `<div id="${c.id}c${k}" class="chipw"><div class="glass gp chip"><span>${esc(String(d).slice(0, 2))}</span></div><span id="${c.id}k${k}" class="bdg">${icon("check")}</span></div>`;
@@ -278,27 +285,27 @@ B.days = (g, c) => {
   html += `</div>` + (g.label ? `<div class="dlab tx" style="font-size:${lsz}px">${esc(g.label)}</div>` : "") + `</div>`;
   days.forEach((d, k) => {
     c.js(`gtl.fromTo("#${c.id}c${k} .glass", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, ${r3(c.s + k * 0.06)});`);
-    c.js(`gtl.fromTo("#${c.id}c${k}", { y: 40, scale: .8 }, { y: 0, scale: 1, ${IN} }, ${r3(c.s + k * 0.06)});`);
+    c.js(`gtl.fromTo("#${c.id}c${k}", { y: ${dist(40)}, scale: .8 }, { y: 0, scale: 1, ${IN()} }, ${r3(c.s + k * 0.06)});`);
     const t = Math.min(c.s + 0.6 + k * 0.2, c.e - 0.6 - (days.length - 1 - k) * 0.1);
     POP(`#${c.id}k${k}`, t).forEach(c.js);
     c.sfx(t - 0.03, "pop");
   });
   if (g.label) c.js(`gtl.fromTo("#${c.id} .dlab", ${TXT_IN()}, ${r3(c.s + 0.4)});`);
-  const w = Math.max(days.length * 112 + (days.length - 1) * 18 + 24, g.label ? textEm(g.label, "geist") * lsz : 0);
+  const w = Math.max(days.length * 112 + (days.length - 1) * 18 + 24, g.label ? textEm(g.label, FT()) * lsz : 0);
   return { html, w: Math.min(860, w), h: 126 + (g.label ? 16 + lsz * 1.3 : 0), noFadeIn: true };
 };
 
 B.compare = (g, c) => {
   const L = g.left || { icon: "check", label: "" }, R = g.right || { icon: "x", label: "" };
   const bad = R.bad !== false;
-  const lsz = Math.min(fitLine(L.label || "", "geist", 330, 38, 28), fitLine(R.label || "", "geist", 330, 38, 28));
+  const lsz = Math.min(fitLine(L.label || "", FT(), 330, 38, 28), fitLine(R.label || "", FT(), 330, 38, 28));
   const col = (side, it, cls, bcls, bic) => `<div id="${c.id}${side}" class="col"><div class="glass gp tile ${cls}">${icon(it.icon)}</div>`
     + `<span id="${c.id}${side}b" class="bdg ${bcls}">${icon(bic)}</span><div class="clab tx" style="font-size:${lsz}px">${esc(it.label || "")}</div></div>`;
   const html = `<div class="cmp">${col("a", L, "good", "", "check")}${col("b", R, "", bad ? "bad" : "", bad ? "x" : "check")}</div>`;
   ["a", "b"].forEach((side, k) => {
     const t = c.s + k * 0.14;
     c.js(`gtl.fromTo("#${c.id}${side} .glass", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, ${r3(t)});`);
-    c.js(`gtl.fromTo("#${c.id}${side}", { y: 40, scale: .8 }, { y: 0, scale: 1, ${IN} }, ${r3(t)});`);
+    c.js(`gtl.fromTo("#${c.id}${side}", { y: ${dist(40)}, scale: .8 }, { y: 0, scale: 1, ${IN()} }, ${r3(t)});`);
     c.js(`gtl.fromTo("#${c.id}${side} .clab", ${TXT_IN()}, ${r3(t + 0.2)});`);
   });
   const ta = Math.min(c.s + 0.55, c.e - 1.0), tb = Math.min(c.s + 0.9, c.e - 0.75);
@@ -307,7 +314,7 @@ B.compare = (g, c) => {
   if (bad) c.js(`gtl.fromTo("#${c.id}b .tile svg", { opacity: 1 }, { opacity: .5, duration: 0.3, immediateRender: false }, ${r3(tb + 0.1)});`);
   c.sfx(ta - 0.03, "pop");
   c.sfx(tb - 0.03, bad ? "click" : "pop");
-  const lw = Math.max(textEm(L.label || "", "geist") * lsz, 164), rw = Math.max(textEm(R.label || "", "geist") * lsz, 164);
+  const lw = Math.max(textEm(L.label || "", FT()) * lsz, 164), rw = Math.max(textEm(R.label || "", FT()) * lsz, 164);
   return { html, w: Math.min(860, lw + rw + 150), h: 164 + 14 + lsz * 1.3, noFadeIn: true };
 };
 
@@ -337,7 +344,7 @@ B.chart = (g, c) => {
   const { d, len } = smoothPath(P), last = P[P.length - 1];
   const area = d + ` L${r2(last[0])},${Hd} L${r2(P[0][0])},${Hd} Z`;
   const [t1, t2] = String(g.title || "").split("/").map((s) => s.trim());
-  const tsz = fitLine((t1 || "") + (t2 ? " / " + t2 : ""), "geist", 576, 44, 28, -0.025);
+  const tsz = fitLine((t1 || "") + (t2 ? " / " + t2 : ""), FT(), 576, 44, 28, -0.025);
   const gid = `${c.id}grad`;
   const html = `<div class="glass gp e0 chart"><span class="sweep"></span><div class="chd tx" style="font-size:${tsz}px">${esc(t1 || "")}${t2 ? `<span> / ${esc(t2)}</span>` : ""}</div>`
     + `<svg class="chs" viewBox="0 0 ${Wd} ${Hd}"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.theme.gold}" stop-opacity=".38"/><stop offset="1" stop-color="${c.theme.gold}" stop-opacity="0"/></linearGradient></defs>`
@@ -346,14 +353,14 @@ B.chart = (g, c) => {
     + `<circle id="${c.id}dt" class="dot" cx="${r2(last[0])}" cy="${r2(last[1])}" r="11"/></svg></div>`;
   c.js(`gtl.fromTo("#${c.id}ln", { strokeDashoffset: ${len} }, { strokeDashoffset: 0, duration: 1.3, ease: "power2.inOut" }, ${r3(c.s + 0.35)});`);
   c.js(`gtl.fromTo("#${c.id}ar", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "power2.out" }, ${r3(c.s + 1.0)});`);
-  c.js(`gtl.fromTo("#${c.id}dt", { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, ${IN_SOFT} }, ${r3(c.s + 1.6)});`);
+  c.js(`gtl.fromTo("#${c.id}dt", { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, ${IN_SOFT()} }, ${r3(c.s + 1.6)});`);
   c.sfx(c.s + 1.57, "pop");
   return { html, w: 640, h: 26 + tsz * 1.2 + 14 + 180 + 22 };
 };
 
 B.icons = (g, c) => {
   const items = (g.items || []).slice(0, 5);
-  const lsz = Math.min(...items.map((it) => (it.label ? fitLine(it.label, "geist", 200, 30, 28) : 28)));
+  const lsz = Math.min(...items.map((it) => (it.label ? fitLine(it.label, FT(), 200, 30, 28) : 28)));
   let html = `<div class="icons">`;
   items.forEach((it, k) => {
     html += `<div id="${c.id}i${k}" class="icw"><div class="glass gp itl">${icon(it.icon)}</div>` + (it.label ? `<div class="il" style="font-size:${lsz}px">${esc(it.label)}</div>` : "") + `</div>`;
@@ -362,11 +369,11 @@ B.icons = (g, c) => {
   items.forEach((it, k) => {
     const t = clamp(Math.max(it.t ?? 0, c.s + k * 0.12), c.s, c.e - 0.6 - (items.length - 1 - k) * 0.1);
     c.js(`gtl.fromTo("#${c.id}i${k} .glass", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "power2.out" }, ${r3(t)});`);
-    c.js(`gtl.fromTo("#${c.id}i${k}", { scale: .4, y: 30 }, { scale: 1, y: 0, ${IN_SOFT} }, ${r3(t)});`);
+    c.js(`gtl.fromTo("#${c.id}i${k}", { scale: .4, y: ${dist(30)} }, { scale: 1, y: 0, ${IN_SOFT()} }, ${r3(t)});`);
     if (it.label) c.js(`gtl.fromTo("#${c.id}i${k} .il", ${TXT_IN(10)}, ${r3(t + 0.15)});`);
     c.sfx(t - 0.03, "pop");
   });
-  const colW = items.map((it) => Math.max(132, it.label ? textEm(it.label, "geist") * lsz : 0));
+  const colW = items.map((it) => Math.max(132, it.label ? textEm(it.label, FT()) * lsz : 0));
   return { html, w: Math.min(860, colW.reduce((a, b) => a + b, 0) + (items.length - 1) * 30), h: 132 + (items.some((i) => i.label) ? 12 + lsz * 1.3 : 0), noFadeIn: true };
 };
 
@@ -375,12 +382,14 @@ export const SLOT_BUILDERS = B;
 // Palabra gigante (para la capa de detrás o delante sin mate). Devuelve tamaño de letra para caber en w×h.
 export function bigWordSize(text, w, h, max) {
   const t = String(text).toUpperCase();
-  return Math.floor(Math.min(max, w / (textEm(t, "anton", 0.01) + 0.08), h / 1.1));
+  return Math.floor(Math.min(max, w / (textEm(t, FK(), 0.01) + 0.08), h / 1.1));
 }
 
 // ─────────────── escena a pantalla completa ───────────────
 export function buildScene(g, c, geo) {
-  const SH_DIM = `0 35px 75px -25px rgba(0,0,0,.7), inset 0 1.5px 0 rgba(255,255,255,.22), 0 0 40px -12px ${rgba(c.theme.accent, 0.45)}`;
+  const light = S().look === "light";
+  const SH_DIM = light ? "0 30px 60px -24px rgba(0,0,0,.35), inset 0 1.5px 0 rgba(255,255,255,.6), 0 4px 14px rgba(0,0,0,.08)" : `0 35px 75px -25px rgba(0,0,0,.7), inset 0 1.5px 0 rgba(255,255,255,.22), 0 0 40px -12px ${rgba(c.theme.accent, 0.45)}`;
+  const B_DIM = light ? "rgba(15,20,30,.08)" : "rgba(255,255,255,.24)", B_OFF = light ? "rgba(15,20,30,.12)" : "rgba(255,255,255,.3)";
   const SH_LIT = `0 0 50px -6px ${rgba(c.theme.gold, 0.5)}, inset 0 1.5px 0 rgba(255,255,255,.22), 0 0 40px -12px ${rgba(c.theme.gold, 0.45)}`;
   const { W, H } = geo, theme = c.theme, row = geo.scene.orient === "row";
   const steps = (g.steps || []).slice(0, row ? 5 : 5);
@@ -388,7 +397,7 @@ export function buildScene(g, c, geo) {
   // márgenes: zona segura en verticales; en 4:5 y horizontal, márgenes limpios
   const M = vertical && H >= 1900 ? { l: 80, r: 140, t: 250, b: 400 } : row ? { l: 120, r: 120, t: 90, b: 90 } : { l: 80, r: 80, t: 90, b: 90 };
   const aw = W - M.l - M.r;
-  const tf = fitWrap(String(g.title || "").toUpperCase(), "anton", aw, 2, row ? 110 : 128, 52, 0.005);
+  const tf = fitWrap(String(g.title || "").toUpperCase(), FK(), aw, 2, row ? 110 : 128, 52, 0.005);
   const headH = (g.kicker ? 46 : 0) + tf.lines.length * tf.size * 0.98;
   const head = `<div id="${c.id}hd" class="fs-head" style="left:${M.l}px;top:${M.t}px;width:${aw}px;${row ? "align-items:center;text-align:center;" : ""}">`
     + (g.kicker ? `<div class="fs-kick">${esc(g.kicker)}</div>` : "")
@@ -406,7 +415,7 @@ export function buildScene(g, c, geo) {
   if (!row) {
     const top = M.t + headH + 80, bottom = H - M.b;
     const gap = 26, rh = Math.min(170, (bottom - top - gap * (n - 1)) / n);
-    const tile = Math.round(rh * 0.68), lsz = Math.min(...steps.map((s) => fitWrap(s.label, "geist", aw - tile - 160, 2, Math.round(rh * 0.3), 24, -0.025).size));
+    const tile = Math.round(rh * 0.68), lsz = Math.min(...steps.map((s) => fitWrap(s.label, FT(), aw - tile - 160, 2, Math.round(rh * 0.3), 24, -0.025).size));
     const total = n * rh + (n - 1) * gap, y0 = top + Math.max(0, (bottom - top - total) / 2);
     const cx = M.l + 22 + tile / 2;
     if (n > 1) {
@@ -425,7 +434,7 @@ export function buildScene(g, c, geo) {
   } else {
     const top = M.t + headH + 70, bottom = H - M.b;
     const gap = 40, cw = Math.min(360, (aw - gap * (n - 1)) / n), ch = Math.min(bottom - top, cw * 1.2);
-    const tile = Math.round(cw * 0.52), lsz = Math.min(...steps.map((s) => fitWrap(s.label, "geist", cw - 40, 2, 42, 24, -0.025).size));
+    const tile = Math.round(cw * 0.52), lsz = Math.min(...steps.map((s) => fitWrap(s.label, FT(), cw - 40, 2, 42, 24, -0.025).size));
     const total = n * cw + (n - 1) * gap, x0 = M.l + (aw - total) / 2, y = top + (bottom - top - ch) / 2;
     if (n > 1) {
       rail = `<span id="${c.id}rl" class="fs-rail" style="left:${x0 + cw / 2}px;top:${y + ch / 2 - 3}px;height:6px;width:${(n - 1) * (cw + gap)}px;transform-origin:0 50%"></span>`
@@ -446,7 +455,7 @@ export function buildScene(g, c, geo) {
   // animación
   const s = c.s, e = c.e, id = c.id;
   c.js(`gtl.fromTo("#${id}pn", { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "none" }, ${r3(s)});`);
-  c.js(`gtl.fromTo("#${id}pn", { clipPath: "inset(38% 9% 44% 9% round 32px)" }, { clipPath: "inset(0% 0% 0% 0% round 0px)", duration: 1.1, ease: VB(0.03, 0.34) }, ${r3(s)});`);
+  c.js(`gtl.fromTo("#${id}pn", { clipPath: "inset(38% 9% 44% 9% round 32px)" }, { clipPath: "inset(0% 0% 0% 0% round 0px)", duration: 1.1, ease: VB(${r3(0.03 * S().motion.spring)}, 0.34) }, ${r3(s)});`);
   c.js(`gtl.fromTo("#${id}hd", { opacity: 0, y: 40, filter: "blur(10px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.6, ease: "power3.out" }, ${r3(s + 0.2)});`);
   const D = Math.max(1, e - s);
   c.js(`gtl.fromTo("#${id}o0", { x: ${-W * 0.08}, y: 0 }, { x: ${W * 0.18}, y: ${H * 0.1}, duration: ${r2(D)}, ease: "sine.inOut" }, ${r3(s)});`);
@@ -460,15 +469,15 @@ export function buildScene(g, c, geo) {
   let prevT = s + 0.4;
   steps.forEach((st, k) => {
     c.js(`gtl.fromTo("#${id}s${k} .glass", { opacity: 0 }, { opacity: .5, duration: 0.3, ease: "power2.out" }, ${r3(s + 0.35 + k * 0.1)});`);
-    c.js(`gtl.fromTo("#${id}s${k}", { ${row ? "y" : "x"}: 80 }, { ${row ? "y" : "x"}: 0, ${IN} }, ${r3(s + 0.35 + k * 0.1)});`);
+    c.js(`gtl.fromTo("#${id}s${k}", { ${row ? "y" : "x"}: ${dist(80)} }, { ${row ? "y" : "x"}: 0, ${IN()} }, ${r3(s + 0.35 + k * 0.1)});`);
     const t = clamp(Math.max(st.t ?? 0, s + 0.9 + k * 0.3, prevT + 0.25), s + 0.5, e - 0.6);
     prevT = t;
-    c.js(`gtl.fromTo("#${id}s${k} .glass", { opacity: .5, borderColor: "rgba(255,255,255,.24)", boxShadow: "${SH_DIM}" }, { opacity: 1, borderColor: "${rgba(theme.gold, 0.85)}", boxShadow: "${SH_LIT}", duration: 0.25, immediateRender: false }, ${r3(t - 0.08)});`);
+    c.js(`gtl.fromTo("#${id}s${k} .glass", { opacity: .5, borderColor: "${B_DIM}", boxShadow: "${SH_DIM}" }, { opacity: 1, borderColor: "${rgba(theme.gold, 0.85)}", boxShadow: "${SH_LIT}", duration: 0.25, immediateRender: false }, ${r3(t - 0.08)});`);
     POP(`#${id}s${k} .lit`, t - 0.08, "scale: .6").forEach(c.js);
-    c.js(`gtl.fromTo("#${id}s${k}", { scale: .96 }, { scale: 1, ${IN} }, ${r3(t - 0.1)});`);
+    c.js(`gtl.fromTo("#${id}s${k}", { scale: .96 }, { scale: 1, ${IN()} }, ${r3(t - 0.1)});`);
     POP(`#${id}b${k}`, t + 0.3).forEach(c.js);
     if (k > 0) {
-      c.js(`gtl.fromTo("#${id}s${k - 1} .glass", { borderColor: "${rgba(theme.gold, 0.85)}", boxShadow: "${SH_LIT}" }, { borderColor: "rgba(255,255,255,.3)", boxShadow: "${SH_DIM}", duration: 0.3, immediateRender: false }, ${r3(t - 0.1)});`);
+      c.js(`gtl.fromTo("#${id}s${k - 1} .glass", { borderColor: "${rgba(theme.gold, 0.85)}", boxShadow: "${SH_LIT}" }, { borderColor: "${B_OFF}", boxShadow: "${SH_DIM}", duration: 0.3, immediateRender: false }, ${r3(t - 0.1)});`);
       if (steps.length > 1) c.js(`gtl.fromTo("#${id}rf", { ${row ? "scaleX" : "scaleY"}: ${r3((k - 1) / (steps.length - 1))} }, { ${row ? "scaleX" : "scaleY"}: ${r3(k / (steps.length - 1))}, duration: 0.45, ease: "power3.inOut", immediateRender: false }, ${r3(t - 0.35)});`);
     }
     c.sfx(t - 0.03, "pop");
@@ -478,4 +487,73 @@ export function buildScene(g, c, geo) {
   c.sfx(s - 0.03, "whoosh");
   c.sfx(e - 0.45, "whoosh");
   return html;
+}
+
+// ─────────────── estilo del usuario: se añade DESPUÉS del CSS base (sin estilo, nada) ───────────────
+function styleCss(theme) {
+  const st = S();
+  if (!st.user) return "";
+  const A = theme.accent, G = theme.gold, fT = st.fonts.title, fK = st.fonts.keyword;
+  let css = "\n        /* estilo del usuario */";
+  if (fT.user) {
+    css += `
+        #gfx-root, #gfx-root .htit, #gfx-root .slabel, #gfx-root .kick, #gfx-root .fs-kick { font-family: ${fT.css}; }`;
+  }
+  if (fK.user) {
+    css += `
+        #gfx-root .big, #gfx-root .num, #gfx-root .fs-title, #gfx-root .snum { font-family: ${fK.css}; }`;
+  }
+  // texto sobre el color de acento (iconos de las tarjetas, checks)
+  css += `
+        #gfx-root .itile, #gfx-root .bdg:not(.bad), #gfx-root .ck, #gfx-root .stile.lit { color: ${st.colors.onAccent}; }`;
+  if (st.look === "solid") {
+    let bg = theme.bg || "#0b0d18";
+    for (let i = 0; i < 6 && luminanceOf(bg) > 0.08; i++) bg = shadeHex(bg, -0.3); // fondo oscuro para el texto blanco
+    css += `
+        #gfx-root .glass { background: ${shadeHex(bg, 0.08)}; border: 1.5px solid rgba(255,255,255,.1); backdrop-filter: none; -webkit-backdrop-filter: none;
+              box-shadow: 0 30px 70px -25px rgba(0,0,0,.75), inset 0 1.5px 0 rgba(255,255,255,.08); }
+        #gfx-root .glass::before { opacity: .35; }
+        #gfx-root .pill.fin { background: ${shadeHex(bg, 0.16)}; border-color: ${rgba(A, 0.8)}; }`;
+  }
+  if (st.look === "light") {
+    const K = st.colors.keywordOnLight || ensureContrast(G, "#ffffff", 3);
+    const AK = ensureContrast(A, "#ffffff", 3);
+    css += `
+        #gfx-root .glass { background: #ffffff; color: #15161e; border: 1.5px solid rgba(15,20,30,.08); backdrop-filter: none; -webkit-backdrop-filter: none;
+              box-shadow: 0 30px 60px -24px rgba(0,0,0,.35), inset 0 1.5px 0 rgba(255,255,255,.6), 0 4px 14px rgba(0,0,0,.08); }
+        #gfx-root .glass::before, #gfx-root .sweep { opacity: 0; }
+        #gfx-root .glass .tx, #gfx-root .glass .pt { text-shadow: none; }
+        #gfx-root .cs { color: rgba(21,22,30,.62); }
+        #gfx-root .kick { color: ${AK}; filter: none; }
+        #gfx-root .chd span { color: rgba(21,22,30,.5); }
+        #gfx-root .pill.fin { background: #ffffff; border: 2px solid ${AK}; box-shadow: 0 0 0 4px ${rgba(A, 0.18)}, 0 30px 60px -24px rgba(0,0,0,.35); }
+        #gfx-root .num { color: #15161e; text-shadow: none; }
+        #gfx-root .chs .gl { stroke: rgba(15,20,30,.08); }
+        #gfx-root .chs .lnp { stroke: ${K}; filter: drop-shadow(0 3px 6px ${rgba(K, 0.35)}); }
+        #gfx-root .chs .dot { stroke: ${K}; }
+        #gfx-root .tile.good { color: ${K}; }
+        #gfx-root .glass.hband { background: #ffffff; }
+        #gfx-root .glass.hband .htit { color: #15161e; text-shadow: none; }
+        #gfx-root .glass.hband .hsub { color: rgba(21,22,30,.62); text-shadow: none; }
+        #gfx-root .glass.hband .hk { color: ${K}; }
+        /* escena clara, como la escena blanca de la referencia */
+        #gfx-root .fs-panel { background: #f3f2ef; }
+        #gfx-root .fs-grid { background-image: linear-gradient(rgba(15,20,30,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(15,20,30,.05) 1px, transparent 1px); }
+        #gfx-root .fs-vign { background: radial-gradient(130% 100% at 50% 40%, transparent 55%, rgba(0,0,0,.1) 100%); }
+        #gfx-root .fs-grain { opacity: .035; }
+        #gfx-root .orb { opacity: .45; }
+        #gfx-root .fs-title { background: linear-gradient(180deg, #15161e 40%, ${AK} 150%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        #gfx-root .fs-kick { color: ${AK}; }
+        #gfx-root .slabel { color: #15161e; }
+        #gfx-root .stile { background: rgba(15,20,30,.05); border-color: rgba(15,20,30,.08); color: #15161e; }
+        #gfx-root .fs-rail { background: rgba(15,20,30,.1); }`;
+  }
+  return css + "\n";
+}
+
+function luminanceOf(hex) {
+  let h = String(hex).replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h.slice(0, 6), 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 }
