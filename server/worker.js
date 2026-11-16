@@ -16,13 +16,55 @@ const { NeedLogin, aiProvider, resetClaudeCheck } = await import("./autoedit/bra
 const { transcribeNow } = await import("./media.js");
 
 const cfgFile = join(DATA, "worker.json");
-const cfg = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : {};
-const SERVER = String(process.env.STUDIO_SERVER || cfg.server || "").replace(/\/+$/, "");
-const TOKEN = process.env.STUDIO_WORKER_TOKEN || cfg.token || "";
-if (!SERVER || !TOKEN) {
-  console.error(`Falta la configuración. Crea ${cfgFile} con:\n{ "server": "https://…easypanel.host/studio", "token": "el STUDIO_WORKER_TOKEN del servidor" }`);
-  process.exit(1);
+const DEFAULT_SERVER = "https://backend-onepulso-chipsfinder.25kofp.easypanel.host";
+let cfg = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : {};
+const SERVER = String(process.env.STUDIO_SERVER || cfg.server || DEFAULT_SERVER).replace(/\/+$/, "");
+let TOKEN = process.env.STUDIO_WORKER_TOKEN || cfg.token || "";
+
+/** Pregunta por la consola (la contraseña no se ve al escribirla). */
+async function ask(question, hidden = false) {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  if (hidden) rl._writeToOutput = (s) => { if (s.includes(question)) process.stdout.write(s); else if (s === "\r\n" || s === "\n") process.stdout.write(s); };
+  const answer = await new Promise((r) => rl.question(question, r));
+  rl.close();
+  if (hidden) process.stdout.write("\n");
+  return answer.trim();
 }
+
+/** Primera vez (o clave que ya no vale): entras con tu cuenta de admin y el PC se conecta solo. */
+async function pair() {
+  console.log(`\nConectar este PC con Pulso Studio (${SERVER})`);
+  console.log("Entra con tu cuenta de administrador de ChipsFinder.\n");
+  for (;;) {
+    const email = await ask("Correo: ");
+    const password = await ask("Contraseña: ", true);
+    const r = await fetch(`${SERVER}/api/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+    const data = await r.json().catch(() => null);
+    if (!r.ok) { console.log(`✗ ${data?.error || "No se pudo entrar"}\n`); continue; }
+    const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
+    const p = await fetch(`${SERVER}/api/pc/pair`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ renew: true }) });
+    const pd = await p.json().catch(() => null);
+    if (!p.ok || !pd?.token) { console.log(`✗ ${pd?.error || "No se pudo conectar el PC"}\n`); continue; }
+    TOKEN = pd.token;
+    cfg = { server: SERVER, token: TOKEN };
+    mkdirSync(DATA, { recursive: true });
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + "\n");
+    console.log("✓ PC conectado. No hará falta volver a hacerlo.\n");
+    return;
+  }
+}
+
+// ¿Vale la clave que tenemos? Si no, se conecta con tu cuenta
+async function tokenWorks() {
+  if (!TOKEN) return false;
+  try {
+    const r = await fetch(`${SERVER}/api/worker/hello`, { method: "POST", headers: { "x-worker-token": TOKEN, "content-type": "application/json" }, body: "{}" });
+    return r.status !== 401;
+  } catch { return true; } // sin red: se reintenta luego
+}
+if (!(await tokenWorks())) await pair();
 
 const log = (...a) => console.log(new Date().toLocaleTimeString("es-ES"), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
