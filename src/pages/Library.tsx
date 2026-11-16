@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Captions, FileAudio, Folder as FolderIcon, FolderPlus, Image as ImageIcon, Loader2, Pencil, Trash2, Upload } from "lucide-react";
+import { Captions, FileAudio, Folder as FolderIcon, FolderPlus, Image as ImageIcon, Loader2, Pencil, Rows2, Trash2, Upload } from "lucide-react";
 import { api, fmtSize, fmtTime, type Folder, type Media } from "../api";
 import { IN_PANEL } from "../base";
 import { Modal, useToast } from "../ui";
 import { ACCEPT, useUploader } from "../editor/MediaPanel";
+import JoinVideos from "./JoinVideos";
 
 const ALL = "__all", NONE = "__none";
 const readView = () => { try { return localStorage.getItem("ps:folder") || ALL; } catch { return ALL; } };
@@ -18,6 +19,7 @@ export default function Library() {
   const [dropOn, setDropOn] = useState<string | null>(null);
   const [nameModal, setNameModal] = useState<{ folder?: Folder } | null>(null);
   const [delFolder, setDelFolder] = useState<Folder | null>(null);
+  const [joining, setJoining] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const inFolder = view !== ALL && view !== NONE ? view : null;
   const { upload, busy } = useUploader((m) => { setList((l) => [...m, ...(l ?? [])]); loadFolders(); }, { auto: true, folder: inFolder });
@@ -81,6 +83,7 @@ export default function Library() {
         </div>
         <div className="page-head__actions">
           <button className="btn" onClick={() => setNameModal({})}><FolderPlus size={16} /> Nueva carpeta</button>
+          <button className="btn" disabled={(list ?? []).filter((m) => m.kind === "video").length < 2} title="Arriba y abajo (reel) o lado a lado (horizontal)" onClick={() => setJoining(true)}><Rows2 size={16} /> Juntar dos vídeos</button>
           <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={!!busy}>
             {busy ? <Loader2 size={16} className="spin" /> : <Upload size={16} />} {busy ? `Subiendo ${busy}…` : current ? `Subir a «${current.name}»` : "Subir archivos"}
           </button>
@@ -153,6 +156,8 @@ export default function Library() {
           ))}
         </div>
       )}
+
+      {joining && <JoinVideos videos={(list ?? []).filter((m) => m.kind === "video")} folder={inFolder} onClose={() => setJoining(false)} onDone={(m) => { setJoining(false); setList((l) => [m, ...(l ?? [])]); loadFolders(); }} />}
 
       {nameModal && <FolderName folder={nameModal.folder} onClose={() => setNameModal(null)} onSaved={(f) => {
         setNameModal(null);

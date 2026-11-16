@@ -17,6 +17,7 @@ import { IS_SERVER, BASE, MODE } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { registerWorkerRoutes } from "./worker-api.js";
 import { registerPresetRoutes } from "./presets.js";
+import { composeVideos, insertComposed } from "./compose.js";
 
 // En modo servidor todo cuelga de BASE (/studio), que es como lo sirve el panel de ChipsFinder
 const root = express();
@@ -108,6 +109,26 @@ app.post("/api/media", upload.array("files", 50), wrap(async (req, res) => {
     out.push(saved);
   }
   res.json(out);
+}));
+
+// Juntar dos vídeos (arriba/abajo o lado a lado) → un vídeo nuevo en la Biblioteca
+app.post("/api/media/compose", wrap(async (req, res) => {
+  const get = (id) => db.prepare("SELECT * FROM media WHERE id = ? AND kind = 'video'").get(String(id || ""));
+  const a = get(req.body?.a), b = get(req.body?.b);
+  if (!a || !b) throw Object.assign(new Error("Elige dos vídeos de la Biblioteca."), { status: 400 });
+  if (a.id === b.id) throw Object.assign(new Error("Elige dos vídeos distintos."), { status: 400 });
+  const layout = req.body?.layout === "side" ? "side" : "stack";
+  const audio = ["a", "b", "mix"].includes(req.body?.audio) ? req.body.audio : "a";
+  const r = await composeVideos(a, b, { layout, audio });
+  const thumb = await makeThumb(join(DIRS.media, r.file), `${r.id}.jpg`, Math.min(1, r.duration / 3)).catch(() => null);
+  const name = String(req.body?.name || `${a.name.replace(/\.[^.]+$/, "")} + ${b.name.replace(/\.[^.]+$/, "")}`).slice(0, 160);
+  insertComposed(r, { name, hasAudio: !!(a.has_audio || b.has_audio), thumb, layout, folder: req.body?.folder });
+  const saved = mediaOut(db.prepare("SELECT * FROM media WHERE id = ?").get(r.id));
+  if (req.body?.auto) {
+    try { saved.autoeditJob = createJob(r.id, { kind: r.duration > 150 ? "shorts" : "variants", ...(getAutoSettings().variants ? { variants: getAutoSettings().variants } : {}) }); }
+    catch (e) { console.warn("[juntar] no se pudo empezar la edición:", e.message); }
+  }
+  res.json(saved);
 }));
 
 app.get("/api/media/:id", wrap((req, res) => {

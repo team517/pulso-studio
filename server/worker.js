@@ -225,7 +225,7 @@ async function ensureMedia(m) {
     log(`Descargando «${m.name}»…`);
     await download(`/api/worker/media/${m.id}/file`, file);
   }
-  const cols = ["id", "name", "kind", "file", "duration", "width", "height", "has_audio", "size", "thumb", "created_at"];
+  const cols = ["id", "name", "kind", "file", "duration", "width", "height", "has_audio", "size", "thumb", "created_at", "layout"];
   db.prepare(`INSERT OR REPLACE INTO media (${cols.join(", ")}, transcript, transcript_status) VALUES (${cols.map(() => "?").join(", ")}, ?, ?)`)
     .run(...cols.map((c) => m[c] ?? null), m.transcript ? JSON.stringify(m.transcript) : null, m.transcript_status === "running" ? null : m.transcript_status ?? null);
 }

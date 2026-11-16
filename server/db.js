@@ -79,6 +79,8 @@ db.exec(`
 // Carpetas de la Biblioteca
 db.exec(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL)`);
 if (!db.prepare("PRAGMA table_info(media)").all().some((c) => c.name === "folder_id")) db.exec("ALTER TABLE media ADD COLUMN folder_id TEXT");
+// Vídeos juntos: "stack" (arriba/abajo) o "side" (lado a lado)
+if (!db.prepare("PRAGMA table_info(media)").all().some((c) => c.name === "layout")) db.exec("ALTER TABLE media ADD COLUMN layout TEXT");
 
 // Identidad de esta base de datos: si cambia, es que el servidor empezó de cero (y tu PC puede devolverle la copia)
 if (!getSetting("server:id")) setSetting("server:id", { id: randomUUID(), at: now(), fresh: NEW_DB });

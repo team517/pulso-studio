@@ -378,7 +378,13 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   const input = renderInputFor(variant, plan, words, {
     workDir: join(dir, "render"), duration,
     base: { video: existsSync(join(work, "base.mp4")) ? join(work, "base.mp4") : join(work, "cut.mp4"), matte: variant.layout === "reference" ? matte : null, srcWidth: info.srcWidth, srcHeight: info.srcHeight },
-    style: toRenderStyle(),
+    style: (() => {
+      // Vídeo de dos (arriba/abajo): los subtítulos van en la línea del medio, sin tapar ninguna cara
+      const st = toRenderStyle();
+      const m = db.prepare("SELECT * FROM media WHERE id = ?").get(job.media_id);
+      if (m?.layout === "stack") st.caption = { ...(st.caption || {}), yPct: 0.5, position: "auto" };
+      return st;
+    })(),
   });
   writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
   const out = await renderVariant(input, (f, label) => setItem(item.id, { progress: Math.min(0.8, 0.02 + f * 0.78), step: label || "Renderizando" }));
