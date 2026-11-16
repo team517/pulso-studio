@@ -28,6 +28,13 @@ export default function AutoEdit() {
     api.media().then(setMedia).catch(() => {});
   }, [load]);
 
+  // El PC se acaba de conectar solo: se vuelve a mirar su estado
+  useEffect(() => {
+    const on = () => { autoApi.info().then(setInfo).catch(() => {}); };
+    window.addEventListener("ps:pc", on);
+    return () => window.removeEventListener("ps:pc", on);
+  }, []);
+
   // Mientras haya algo en marcha, se refresca solo (así cada versión aparece en cuanto acaba)
   const active = jobs?.some((j) => j.status === "running" || j.status === "queued" || j.items.some((i) => !["done", "error"].includes(i.status)));
   useEffect(() => {

@@ -33,7 +33,34 @@ export default function App() {
   const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null; name?: string | null } | null>(null);
   const [pending, setPending] = useState<PairRequest[]>([]);
   const [approving, setApproving] = useState(false);
+  const [pcJustConnected, setPcJustConnected] = useState<string | null>(null);
   const pathname = path.split("?")[0];
+
+  // Conexión automática: si en este ordenador está abierto el editor y no está conectado, se le da la clave
+  useEffect(() => {
+    if (!IN_PANEL) return;
+    let busy = false;
+    const local = (path: string, init?: RequestInit) =>
+      fetch(`http://127.0.0.1:47321${path}`, { ...init, signal: AbortSignal.timeout(4000), targetAddressSpace: "loopback" } as RequestInit);
+    const tryConnect = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const st = await local("/status").then((r) => r.json()).catch(() => null);
+        if (!st || st.connected) return;
+        const pair = await fetch("/api/pc/pair", { method: "POST" }).then((r) => (r.ok ? r.json() : null));
+        if (!pair?.token) return;
+        const r = await local("/token", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: pair.token }) });
+        if (r.ok) {
+          setPcJustConnected(st.name || "Tu PC");
+          setTimeout(() => window.dispatchEvent(new Event("ps:pc")), 2500);
+        }
+      } finally { busy = false; }
+    };
+    tryConnect();
+    const t = setInterval(tryConnect, 20000);
+    return () => clearInterval(t);
+  }, []);
 
   // ¿Está el servidor local encendido?
   useEffect(() => {
@@ -47,7 +74,8 @@ export default function App() {
     };
     check();
     const t = setInterval(check, 10000);
-    return () => clearInterval(t);
+    window.addEventListener("ps:pc", check);
+    return () => { clearInterval(t); window.removeEventListener("ps:pc", check); };
   }, []);
 
   const editorId = pathname.match(/^\/editor\/([\w-]+)/)?.[1];
@@ -106,7 +134,8 @@ export default function App() {
       </aside>
       <main className="main">
         {!storageOk && <div className="note note--bad" style={{ margin: "16px 24px 0" }}><b>Falta el volumen en EasyPanel: al implementar se borra lo que hay en el servidor.</b> En EasyPanel → servicio <b>chipsfinder</b> → <b>Mounts</b> → <b>Add Volume Mount</b>: nombre <code>pulso-data</code>, ruta <code>/app/data</code> → Guardar → Implementar. Mientras tanto no pierdes nada: tu PC guarda una copia de todo y la devuelve sola.</div>}
-        {IN_PANEL && pending.length > 0 && pathname !== "/conectar-pc" && (
+        {pcJustConnected && <div className="note note--ok" style={{ margin: "16px 24px 0" }} onClick={() => setPcJustConnected(null)}><b>{pcJustConnected} se ha conectado solo.</b> Ya edita para ti y guarda una copia de todo (también de tu cuenta).</div>}
+        {IN_PANEL && !pcJustConnected && pending.length > 0 && pathname !== "/conectar-pc" && (
           <div className="note note--warn pc-ask" style={{ margin: "16px 24px 0" }}>
             <span><b>{pending[0].name}</b> quiere conectarse para editar (código <span className="mono">{pending[0].code}</span>).</span>
             <button className="btn btn--primary btn--sm" disabled={approving} onClick={async () => {

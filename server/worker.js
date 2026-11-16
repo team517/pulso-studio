@@ -43,13 +43,64 @@ function openBrowser(url) {
   } catch { /* se ve el enlace en la ventana */ }
 }
 
-/** Conectar el PC: pide un código al panel, abre la web y espera a que pulses «Conectar». */
+/* ---------- Conexión automática desde la web ----------
+   El editor escucha SOLO dentro de este ordenador (127.0.0.1). Cuando tienes la web abierta con tu sesión,
+   la web le pasa la clave del PC y queda conectado solo, sin códigos ni botones. Solo acepta peticiones
+   que vienen de tu web (cabecera Origin), y comprueba la clave con el panel antes de guardarla. */
+const LOCAL_PORT = Number(process.env.STUDIO_LOCAL_PORT || 47321);
+const ORIGIN = new URL(SERVER).origin;
+let localPaired = false;
+{
+  const { createServer } = await import("node:http");
+  const cors = (req, res) => {
+    const ok = req.headers.origin === ORIGIN;
+    if (ok) {
+      res.setHeader("Access-Control-Allow-Origin", ORIGIN);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "content-type");
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+      res.setHeader("Vary", "Origin");
+    }
+    return ok;
+  };
+  const send = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+  const local = createServer(async (req, res) => {
+    const ok = cors(req, res);
+    if (req.method === "OPTIONS") { res.writeHead(ok ? 204 : 403); return res.end(); }
+    if (!ok) return send(res, 403, { error: "Solo desde tu Pulso Studio." });
+    if (req.method === "GET" && req.url === "/status") return send(res, 200, { connected: !pairing && !!TOKEN, pairing: !!pairing, name: PC_NAME });
+    if (req.method === "POST" && req.url === "/token") {
+      let raw = "";
+      for await (const c of req) { raw += c; if (raw.length > 4096) break; }
+      let token = "";
+      try { token = String(JSON.parse(raw).token || ""); } catch { /* vacío */ }
+      if (token.length < 20) return send(res, 400, { error: "Falta la clave." });
+      try {
+        const r = await fetch(`${SERVER}/api/worker/hello`, { method: "POST", headers: { "x-worker-token": token, "content-type": "application/json" }, body: JSON.stringify({ name: PC_NAME }), signal: AbortSignal.timeout(15e3) });
+        if (r.status === 401) return send(res, 400, { error: "Esa clave no vale." });
+      } catch { /* sin red: se guarda igualmente */ }
+      TOKEN = token;
+      saveCfg();
+      try { beat.postMessage({ token: TOKEN, now: true }); } catch { /* aún no hay hilo */ }
+      localPaired = true;
+      log("✓ PC conectado desde la web (automático).");
+      return send(res, 200, { ok: true, name: PC_NAME });
+    }
+    send(res, 404, { error: "No existe." });
+  });
+  local.on("error", (e) => log(`Conexión automática no disponible (puerto ${LOCAL_PORT}):`, e.code || e.message));
+  local.listen(LOCAL_PORT, "127.0.0.1");
+  local.unref();
+}
+
+/** Conectar el PC: se conecta solo desde la web; si no, código y botón «Conectar». */
 let pairing = null, opened = false;
 function pair() {
   if (pairing) return pairing;
   pairing = (async () => {
     for (;;) {
       if (await claim()) return;
+      if (localPaired) { localPaired = false; return; }
       let start;
       try {
         const r = await fetch(`${SERVER}/api/worker/pair/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: PC_NAME }), signal: AbortSignal.timeout(20e3) });
@@ -57,13 +108,14 @@ function pair() {
         if (!r.ok) throw new Error(start?.error || r.status);
       } catch (e) { log("No llego al panel para conectar el PC:", e.message, "· reintento en 30 s"); await sleep(30e3); continue; }
       console.log(`\n  Conectar este PC (${PC_NAME}) con Pulso Studio`);
-      console.log(`  Se ha abierto la web: pulsa «Conectar este PC». Código: ${start.code}`);
+      console.log(`  Se ha abierto la web: con tu sesión iniciada se conecta sola (o pulsa «Conectar este PC»). Código: ${start.code}`);
       console.log(`  Si no se abre, entra en: ${start.url}\n`);
       if (!opened) { openBrowser(start.url); opened = true; }
       else console.log("  (También puedes conectarlo desde el aviso que sale arriba en la web.)");
       const until = Date.now() + 18 * 60e3;
       while (Date.now() < until) {
         await sleep(3000);
+        if (localPaired) { localPaired = false; return; }
         try {
           const r = await fetch(`${SERVER}/api/worker/pair/${start.code}`, { signal: AbortSignal.timeout(15e3) });
           if (r.status === 404) break; // caducado: se pide otro
