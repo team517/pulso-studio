@@ -9,13 +9,14 @@ import { ACCEPT, useUploader } from "../editor/MediaPanel";
 import "./autoedit.css";
 
 const LAYOUT_SHAPE: Record<string, [number, number]> = { reference: [9, 16], headline: [9, 16], minimal: [9, 16], horizontal: [16, 9], framed: [4, 5] };
+type AutoInfo = { claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[]; worker?: { online: boolean; claude: boolean; lastSeen: number | null; busy: string | null } | null };
 const FRAMING_LABEL: Record<string, string> = { wide: "Plano abierto", medium: "Plano medio", close: "Primer plano" };
 const GRADE_LABEL: Record<string, string> = { warm: "Color cálido", cool: "Color frío", punchy: "Color intenso", soft: "Color suave" };
 const STEP_LABEL: Record<AutoItem["status"], string> = { queued: "En cola", rendering: "Renderizando", mixing: "Sonido", qa: "Revisando", done: "Lista", error: "Error" };
 
 export default function AutoEdit() {
   const toast = useToast();
-  const [info, setInfo] = useState<{ claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] } | null>(null);
+  const [info, setInfo] = useState<AutoInfo | null>(null);
   const [jobs, setJobs] = useState<AutoJob[] | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
   const [creating, setCreating] = useState(false);
@@ -47,7 +48,7 @@ export default function AutoEdit() {
         </div>
       </div>
 
-      {info && !info.claude && <ClaudeLoginNote onReady={(i) => setInfo(i)} />}
+      {info && !info.claude && <ClaudeLoginNote worker={info.worker} onReady={(i) => setInfo(i)} />}
       {info && <DropToEdit variants={info.variants.map((v) => v.key)} onStarted={load} />}
 
       {jobs === null ? <p className="muted">Cargando…</p> : jobs.length === 0 ? (
@@ -69,7 +70,7 @@ export default function AutoEdit() {
   );
 }
 
-function ClaudeLoginNote({ onReady }: { onReady: (i: { claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] }) => void }) {
+function ClaudeLoginNote({ worker, onReady }: { worker?: AutoInfo["worker"]; onReady: (i: AutoInfo) => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   async function check() {
@@ -85,7 +86,11 @@ function ClaudeLoginNote({ onReady }: { onReady: (i: { claude: boolean; provider
     <div className="note note--warn ae-login">
       <Terminal size={18} />
       <div>
-        <b>Claude no tiene la sesión iniciada en este ordenador.</b> Es quien decide los cortes, las palabras clave, los ángulos de cada short y qué gráfico va en cada frase. Inicia sesión en Claude y pulsa «Comprobar».
+        {worker && !worker.online ? (
+          <><b>Tu PC está apagado o sin conexión.</b> Los vídeos que subas esperan en cola y tu PC los edita en cuanto lo enciendas (con «npm run worker» en la carpeta de Pulso Studio).</>
+        ) : (
+          <><b>Claude no tiene la sesión iniciada{worker ? " en tu PC" : " en este ordenador"}.</b> Es quien decide los cortes, las palabras clave, los ángulos de cada short y qué gráfico va en cada frase. Inicia sesión en Claude y pulsa «Comprobar».</>
+        )}
         <div className="row" style={{ marginTop: 10 }}>
           <button className="btn btn--sm btn--primary" disabled={busy} onClick={check}>{busy ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />} Comprobar</button>
         </div>
@@ -135,7 +140,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
 /* ---------- Nueva edición ---------- */
 
 function NewJob({ info, media, onMedia, onClose, onCreated }: {
-  info: { claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[] }; media: Media[]; onMedia: (m: Media[]) => void; onClose: () => void; onCreated: () => void;
+  info: AutoInfo; media: Media[]; onMedia: (m: Media[]) => void; onClose: () => void; onCreated: () => void;
 }) {
   const toast = useToast();
   const videos = media.filter((m) => m.kind === "video");

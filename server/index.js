@@ -13,9 +13,17 @@ import { registerAutoeditRoutes } from "./autoedit/routes.js";
 import { createJob } from "./autoedit/pipeline.js";
 import { registerStyleRoutes, getAutoSettings } from "./style.js";
 import { registerInsightsRoutes, startInsightsPoller } from "./insights.js";
+import { IS_SERVER, BASE, MODE } from "./config.js";
+import { registerAuth } from "./auth.js";
+import { registerWorkerRoutes } from "./worker-api.js";
 
-const app = express();
+// En modo servidor todo cuelga de BASE (/studio), que es como lo sirve el panel de ChipsFinder
+const root = express();
+root.set("trust proxy", true);
+const app = express.Router();
+root.use(BASE || "/", app);
 app.use(express.json({ limit: "20mb" }));
+registerAuth(app);
 
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   console.error(e);
@@ -294,7 +302,7 @@ app.get("/api/auth/:p/start", wrap((req, res) => {
 app.get("/api/auth/:p/callback", async (req, res) => {
   const st = oauthStates.get(String(req.query.state || ""));
   oauthStates.delete(String(req.query.state || ""));
-  const back = (st?.back || "/conexiones").replace(/^(?!\/)/, "/");
+  const back = BASE + (st?.back || "/conexiones").replace(/^(?!\/)/, "/");
   const front = st?.front || "";
   if (!st || st.p !== req.params.p) return res.redirect(`${front}${back}?error=${encodeURIComponent("La conexión caducó, inténtalo otra vez.")}`);
   if (req.query.error) return res.redirect(`${front}${back}?error=${encodeURIComponent(String(req.query.error_description || req.query.error))}`);
@@ -318,16 +326,20 @@ registerStyleRoutes(app, wrap);
 
 registerInsightsRoutes(app);
 
+/* ---------- El PC que edita (modo servidor) ---------- */
+
+registerWorkerRoutes(app, wrap);
+
 /* ---------- Web (versión compilada) ---------- */
 
-const dist = join(process.cwd(), "dist");
+const dist = process.env.STUDIO_DIST || join(process.cwd(), "dist");
 if (existsSync(dist)) {
   app.use(express.static(dist));
   app.get(/^\/(?!api|files).*/, (req, res) => res.sendFile(join(dist, "index.html")));
 }
 
-app.listen(PORT, () => {
-  console.log(`Pulso Studio · servidor en http://localhost:${PORT} · redes: ${publicUrl()}`);
+root.listen(PORT, () => {
+  console.log(`Pulso Studio (${MODE}) · servidor en http://localhost:${PORT}${BASE}/ · redes: ${publicUrl()}`);
   startScheduler();
   startInsightsPoller();
 });

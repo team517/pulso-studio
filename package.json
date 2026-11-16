@@ -7,7 +7,9 @@
     "dev": "concurrently -k -n server,web -c magenta,cyan \"node --watch server/index.js\" \"vite\"",
     "server": "node server/index.js",
     "build": "tsc -b && vite build",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "worker": "node server/worker.js",
+    "build:panel": "vite build"
   },
   "dependencies": {
     "express": "^4.21.2",

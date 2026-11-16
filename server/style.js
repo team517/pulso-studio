@@ -7,6 +7,7 @@ import { join, extname, basename } from "node:path";
 import { spawn } from "node:child_process";
 import { db, DATA, uid, now, getSetting, setSetting } from "./db.js";
 import { askClaude, canSeeImages } from "./autoedit/brain.js";
+import { IS_SERVER } from "./config.js";
 
 export const STYLE_DIR = join(DATA, "style");
 mkdirSync(STYLE_DIR, { recursive: true });
@@ -173,6 +174,38 @@ const FONT_EXT = [".ttf", ".otf", ".woff", ".woff2"];
 const IMG_EXT = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
 const VID_EXT = [".mp4", ".mov", ".m4v", ".webm"];
 
+export async function lookAtReferences() {
+  const refs = db.prepare("SELECT * FROM style_assets WHERE kind = 'reference'").all();
+  const files = refs.map((r) => ({ path: join(STYLE_DIR, r.file), video: VID_EXT.includes(extname(r.file).toLowerCase()) })).filter((f) => existsSync(f.path));
+  let aiNotes = "";
+  let seen = false;
+  if (files.length && (await canSeeImages())) {
+    // Fotogramas de los vídeos de referencia (los primeros 6 de cada uno) + las imágenes
+    const shots = [];
+    const tmp = join(STYLE_DIR, "_analisis");
+    mkdirSync(tmp, { recursive: true });
+    for (const [k, f] of files.entries()) {
+      if (!f.video) { shots.push(f.path); continue; }
+      await new Promise((r) => { const p = spawn("ffmpeg", ["-v", "error", "-y", "-i", f.path, "-vf", "fps=1/3,scale=-2:720", "-frames:v", "6", join(tmp, `ref${k}-%02d.jpg`)], { windowsHide: true }); p.on("close", r); p.on("error", r); });
+      for (let i = 1; i <= 6; i++) { const s = join(tmp, `ref${k}-${String(i).padStart(2, "0")}.jpg`); if (existsSync(s)) shots.push(s); }
+    }
+    try {
+      const r = await askClaude(`Eres director de arte de reels. Mira estas capturas de referencia y describe su ESTILO DE EDICIÓN con valores concretos para copiarlo: tipografías (tipo, grosor, mayúsculas), subtítulos (tamaño relativo, posición, cuántas palabras, cómo resaltan la palabra clave), tarjetas/gráficos (forma, color, transparencia, iconos), animaciones que se intuyen, colores y ritmo. Responde SOLO con JSON: {"notes":"descripción breve y accionable en español (máx. 900 caracteres)","caption":{"size":"s|m|l","uppercase":true|false,"position":"auto|high|low","keywordStyle":"big|highlight|box"},"cards":{"look":"glass|solid|light"},"motion":{"intensity":1|2|3}}`,
+        { images: shots.slice(0, 18), dir: STYLE_DIR, timeoutMs: 6 * 60e3 });
+      aiNotes = String(r.notes || "").slice(0, 900);
+      seen = true;
+      const cur = getSetting("style:default", {});
+      setSetting("style:default", { ...cur, aiNotes, aiSuggested: { caption: r.caption, cards: r.cards, motion: r.motion } });
+    } catch (e) {
+      aiNotes = "";
+      console.warn("[estilo] análisis visual falló:", e.message);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  return { aiNotes, seen };
+}
+
 export function registerStyleRoutes(app, wrap) {
   app.use("/files/style", express.static(STYLE_DIR, { maxAge: "1h" }));
 
@@ -186,7 +219,10 @@ export function registerStyleRoutes(app, wrap) {
 
   app.put("/api/style", wrap((req, res) => {
     const cur = getSetting("style:default", {});
-    const next = merge(merge(DEFAULT_STYLE, cur), req.body?.style || {});
+    // Lo que sale del análisis (colores medidos, ritmo, lo que vio Claude) no lo pisa el guardado automático de la página
+    const { palette, rhythm, aiNotes, aiSuggested, ...incoming } = req.body?.style || {};
+    void palette; void rhythm; void aiNotes; void aiSuggested;
+    const next = merge(merge(DEFAULT_STYLE, cur), incoming);
     next.notes = String(next.notes || "").slice(0, 2000);
     setSetting("style:default", next);
     if (req.body?.auto) setSetting("autoedit:auto", { ...getAutoSettings(), ...req.body.auto });
@@ -252,33 +288,17 @@ export function registerStyleRoutes(app, wrap) {
     }
     let aiNotes = "";
     let seen = false;
-    if (await canSeeImages()) {
-      // Fotogramas de los vídeos de referencia (los primeros 6 de cada uno) + las imágenes
-      const shots = [];
-      const tmp = join(STYLE_DIR, "_analisis");
-      mkdirSync(tmp, { recursive: true });
-      for (const [k, f] of files.entries()) {
-        if (!f.video) { shots.push(f.path); continue; }
-        await new Promise((r) => { const p = spawn("ffmpeg", ["-v", "error", "-y", "-i", f.path, "-vf", "fps=1/3,scale=-2:720", "-frames:v", "6", join(tmp, `ref${k}-%02d.jpg`)], { windowsHide: true }); p.on("close", r); p.on("error", r); });
-        for (let i = 1; i <= 6; i++) { const s = join(tmp, `ref${k}-${String(i).padStart(2, "0")}.jpg`); if (existsSync(s)) shots.push(s); }
-      }
-      try {
-        const r = await askClaude(`Eres director de arte de reels. Mira estas capturas de referencia y describe su ESTILO DE EDICIÓN con valores concretos para copiarlo: tipografías (tipo, grosor, mayúsculas), subtítulos (tamaño relativo, posición, cuántas palabras, cómo resaltan la palabra clave), tarjetas/gráficos (forma, color, transparencia, iconos), animaciones que se intuyen, colores y ritmo. Responde SOLO con JSON: {"notes":"descripción breve y accionable en español (máx. 900 caracteres)","caption":{"size":"s|m|l","uppercase":true|false,"position":"auto|high|low","keywordStyle":"big|highlight|box"},"cards":{"look":"glass|solid|light"},"motion":{"intensity":1|2|3}}`,
-          { images: shots.slice(0, 18), dir: STYLE_DIR, timeoutMs: 6 * 60e3 });
-        aiNotes = String(r.notes || "").slice(0, 900);
-        seen = true;
-        const cur = getSetting("style:default", {});
-        setSetting("style:default", { ...cur, aiNotes, aiSuggested: { caption: r.caption, cards: r.cards, motion: r.motion } });
-      } catch (e) {
-        aiNotes = "";
-        console.warn("[estilo] análisis visual falló:", e.message);
-      } finally {
-        rmSync(tmp, { recursive: true, force: true });
-      }
+    let pending = false;
+    if (IS_SERVER) {
+      // Claude está en el PC: se le pide que mire las referencias en cuanto pueda
+      setSetting("worker:analyzeReq", Date.now());
+      pending = true;
+    } else {
+      ({ aiNotes, seen } = await lookAtReferences());
     }
     const cur = getSetting("style:default", {});
     setSetting("style:default", { ...cur, palette, ...(rhythm ? { rhythm } : {}) });
     const saved = getSetting("style:default", {});
-    res.json({ palette, suggestion, aiNotes, seen, rhythm, aiSuggested: saved.aiSuggested ?? null, style: getStyle() });
+    res.json({ palette, suggestion, aiNotes, seen, pending, rhythm, aiSuggested: saved.aiSuggested ?? null, style: getStyle() });
   }));
 }

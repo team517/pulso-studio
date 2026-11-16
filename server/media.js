@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { db, DIRS } from "./db.js";
 import { onGpu } from "./gpu.js";
+import { IS_SERVER } from "./config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -49,19 +50,28 @@ export async function makeThumb(file, outName, at = 0.5) {
 /* ---------- Transcripción (Whisper en la GPU) ---------- */
 
 // De uno en uno: dos modelos a la vez no caben en la memoria de la GPU (cola compartida en gpu.js)
-const queued = new Set();
+const queued = new Map();
 
 // Si el servidor se cerró a mitad de una transcripción, se deja lista para repetirla
 db.prepare("UPDATE media SET transcript_status = NULL WHERE transcript_status = 'running'").run();
 
 export function transcribe(mediaId, language = "es") {
-  if (queued.has(mediaId)) return;
+  if (IS_SERVER) {
+    // Se queda marcada; el PC la recoge, la transcribe con Whisper y devuelve el texto
+    db.prepare("UPDATE media SET transcript_status = 'running' WHERE id = ?").run(mediaId);
+    return;
+  }
+  return transcribeNow(mediaId, language);
+}
+
+/** Transcribe ya en este ordenador (devuelve una promesa que acaba cuando termina). */
+export function transcribeNow(mediaId, language = "es") {
+  if (queued.has(mediaId)) return queued.get(mediaId);
   const m = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaId);
-  if (!m) return;
-  queued.add(mediaId);
+  if (!m) return Promise.resolve();
   db.prepare("UPDATE media SET transcript_status = 'running' WHERE id = ?").run(mediaId);
   const file = join(DIRS.media, m.file);
-  onGpu(() => run("python", [join(HERE, "transcribe.py"), file, language]))
+  const job = onGpu(() => run("python", [join(HERE, "transcribe.py"), file, language]))
     .then((out) => {
       const line = out.trim().split("\n").pop();
       const words = JSON.parse(line);
@@ -72,4 +82,6 @@ export function transcribe(mediaId, language = "es") {
       db.prepare("UPDATE media SET transcript_status = ? WHERE id = ?").run("error: " + e.message.slice(-300), mediaId);
     })
     .finally(() => queued.delete(mediaId));
+  queued.set(mediaId, job);
+  return job;
 }

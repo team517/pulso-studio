@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const DATA = join(process.cwd(), "data");
+export const DATA = process.env.STUDIO_DATA || join(process.cwd(), "data");
 export const DIRS = {
   media: join(DATA, "media"),
   thumbs: join(DATA, "thumbs"),

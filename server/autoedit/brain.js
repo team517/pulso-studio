@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getSetting } from "../db.js";
+import { IS_SERVER } from "../config.js";
 
 export class NeedLogin extends Error {
   constructor() { super("Claude no tiene la sesión iniciada en este ordenador."); }
@@ -78,6 +79,7 @@ const isAuthError = (t) => /log ?in|login|authenticate|oauth/i.test(String(t || 
 
 /** ¿Tiene Claude la sesión iniciada? (se guarda 5 min) */
 async function claudeLoggedIn() {
+  if (IS_SERVER) return false; // en EasyPanel no hay Claude: edita el PC
   // Con sesión se vuelve a mirar cada 5 min; sin sesión, cada 30 min (la comprobación tarda)
   if (loginCache.ok !== null && Date.now() - loginCache.at < (loginCache.ok ? 5 : 30) * 60e3) return loginCache.ok;
   try {
@@ -93,10 +95,11 @@ async function claudeLoggedIn() {
 async function askClaudeCli(prompt, { images = [], dir = null, timeoutMs = 8 * 60e3 } = {}) {
   const args = ["-p", "--output-format", "json"];
   if (images.length && dir) args.push("--allowedTools", "Read", "--add-dir", `"${dir}"`, "--max-turns", "15");
-  else args.push("--max-turns", "1");
+  // Sin imágenes no necesita herramientas; si aun así intenta usar alguna, se le deniega y contesta en el turno siguiente
+  else args.push("--max-turns", "4");
   const full = images.length
     ? prompt + "\n\nMira estas imágenes con la herramienta Read antes de contestar:\n" + images.map((i) => "- " + i).join("\n")
-    : prompt;
+    : prompt + "\n\n(Contesta directamente con el JSON, sin usar herramientas ni leer archivos: todo lo que necesitas está arriba.)";
   const r = await runClaude(args, full, timeoutMs);
   let j;
   try { j = JSON.parse(r.stdout); } catch { throw new Error("Claude no respondió bien: " + (r.stderr || r.stdout).slice(0, 300)); }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Copy, ExternalLink, Link2, Loader2, LogOut } from "lucide-react";
 import { api, PLATFORM_INFO, type PlatformId, type PlatformStatus } from "../api";
+import { url, insideFrame } from "../base";
 import { Field, navigate, usePath, useToast } from "../ui";
 import { PlatformBadge } from "./Calendar";
 
@@ -180,7 +181,11 @@ function PlatformCard({ st, onChange }: { st: PlatformStatus; onChange: () => vo
               </div>
               <div className="row">
                 <button className="btn" onClick={saveCreds} disabled={busy || !clientId.trim() || (!st.configured && !secret.trim())}>Guardar datos</button>
-                <button className="btn btn--primary" disabled={!st.configured} onClick={() => { window.location.href = `/api/auth/${st.id}/start?front=${encodeURIComponent(window.location.origin)}`; }}>
+                <button className="btn btn--primary" disabled={!st.configured} onClick={() => {
+                  const go = url(`/api/auth/${st.id}/start?front=${encodeURIComponent(window.location.origin)}`);
+                  // Dentro del panel la web va en un marco: Google y TikTok no se dejan abrir ahí
+                  if (insideFrame) window.open(go, "_blank"); else window.location.href = go;
+                }}>
                   <Link2 size={15} /> {st.connected ? "Volver a conectar" : `Conectar con ${st.id === "youtube" ? "YouTube" : "TikTok"}`}
                 </button>
               </div>

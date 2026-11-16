@@ -12,6 +12,7 @@ import { analyzeAudio, keepSegments } from "./analysis.js";
 void claudeReady;
 import { VARIANTS, decideCuts, makePlan, renderInputFor, pickShorts, validatePlan } from "./plan.js";
 import { toRenderStyle, styleNotesForAI, getStyle } from "../style.js";
+import { MODE, IS_SERVER } from "../config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, "py");
@@ -33,8 +34,10 @@ db.exec(`
   );
 `);
 // Si el programa se cerró a mitad de un trabajo, se retoma (las pasadas ya hechas no se repiten)
-db.prepare("UPDATE autoedit_jobs SET status = 'queued' WHERE status = 'running'").run();
-db.prepare("UPDATE autoedit_items SET status = 'queued' WHERE status NOT IN ('done','error','queued')").run();
+if (MODE === "local") {
+  db.prepare("UPDATE autoedit_jobs SET status = 'queued' WHERE status = 'running'").run();
+  db.prepare("UPDATE autoedit_items SET status = 'queued' WHERE status NOT IN ('done','error','queued')").run();
+}
 
 const setJob = (id, f) => {
   const k = Object.keys(f);
@@ -70,6 +73,8 @@ export function createJob(mediaId, { kind = "variants", shorts = 3, variants = V
 
 let busy = false;
 export function kick() {
+  // En el servidor no se edita (lo recoge el PC); en el PC, el que manda es worker.js
+  if (MODE !== "local") return;
   if (busy) return;
   const next = db.prepare("SELECT id FROM autoedit_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1").get();
   if (!next) {
@@ -100,7 +105,9 @@ async function prepareSource(job, work) {
   if (!existsSync(join(work, "words-raw.json"))) {
     setJob(job.id, { step: "Escuchando la voz (Whisper)", progress: 0.08 });
     const opts = job.options || {};
-    await onGpu(() => py("whisper_words.py", ["--audio", join(work, "audio16k.wav"), "--out", join(work, "words-raw.json"), "--lang", "es", ...(opts.vocab ? ["--vocab", opts.vocab] : [])]));
+    const whisper = () => onGpu(() => py("whisper_words.py", ["--audio", join(work, "audio16k.wav"), "--out", join(work, "words-raw.json"), "--lang", "es", ...(opts.vocab ? ["--vocab", opts.vocab] : [])]));
+    // Whisper a veces se cae al arrancar en la tarjeta gráfica (fallo de memoria de Windows): un reintento lo arregla
+    await whisper().catch(async (e) => { console.warn("[autoedit] Whisper falló, reintento:", String(e.message).slice(-200)); await new Promise((r) => setTimeout(r, 4000)); return whisper(); });
   }
   return readJson(join(work, "info.json"));
 }
@@ -318,7 +325,7 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
 
 /* ---------- Trabajo completo ---------- */
 
-async function runJob(id) {
+export async function runJob(id) {
   const job = row(db.prepare("SELECT * FROM autoedit_jobs WHERE id = ?").get(id));
   const opts = job.options || {};
   setJob(id, { status: "running", error: null });
@@ -432,6 +439,12 @@ export async function requestChanges(itemId, notes) {
   const it = row(db.prepare("SELECT * FROM autoedit_items WHERE id = ?").get(itemId));
   if (!it) throw Object.assign(new Error("No encuentro esa versión."), { status: 404 });
   const job = row(db.prepare("SELECT * FROM autoedit_jobs WHERE id = ?").get(it.job_id));
+  if (IS_SERVER) {
+    // Claude está en el PC: se le deja el encargo y lo rehace cuando lo recoja
+    setItem(it.id, { notes: String(notes).slice(0, 1500), post: { ...(it.post || {}), changeRequest: String(notes).slice(0, 1500) }, status: "queued", step: "En cola para rehacer en tu PC", progress: 0, review: "pending", error: null });
+    if (!["queued", "running"].includes(job.status)) setJob(job.id, { status: "queued", step: "En cola", error: null });
+    return;
+  }
   const base = it.post?.plan || job.plan;
   if (!base?.phrases) throw Object.assign(new Error("Esta versión todavía no tiene plan."), { status: 400 });
   const work = job.kind === "shorts" ? join(ROOT, job.id, "shorts", String(it.idx)) : join(ROOT, job.id, "fuente");
@@ -450,6 +463,8 @@ Aplica los cambios como reglas para todo el vídeo (no solo en un momento). Devu
   setItem(it.id, { notes: String(notes).slice(0, 1500), post: { ...(it.post || {}), plan }, status: "queued", step: "En cola para rehacer", progress: 0, review: "pending", error: null });
   kick();
 }
+
+export { setJob, setItem };
 
 export function jobView(id) {
   const j = row(db.prepare("SELECT * FROM autoedit_jobs WHERE id = ?").get(id));
@@ -500,7 +515,7 @@ export function setReview(itemId, review) {
 }
 
 export function retryJob(id) {
-  setJob(id, { status: "queued", error: null, step: "En cola" });
+  setJob(id, { status: "queued", error: null, step: "En cola", progress: 0 });
   db.prepare("UPDATE autoedit_items SET status = 'queued', error = NULL WHERE job_id = ? AND status = 'error'").run(id);
   kick();
 }

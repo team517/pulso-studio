@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// VITE_BASE=/studio/ cuando se compila para el panel de ChipsFinder (EasyPanel)
 export default defineConfig({
+  base: process.env.VITE_BASE || "/",
   plugins: [react()],
   css: { postcss: {} },
   server: {

@@ -1,13 +1,20 @@
 // Piezas de interfaz compartidas: modal, avisos, interruptor y navegación.
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
+import { BASE } from "./base";
 
 /* ---------- Navegación sencilla con la URL ---------- */
 
+/** Ruta actual sin la base (/studio en el panel). */
+const here = () => {
+  const p = window.location.pathname;
+  return (BASE && p.startsWith(BASE) ? p.slice(BASE.length) || "/" : p) + window.location.search;
+};
+
 export function usePath(): [string, (to: string, replace?: boolean) => void] {
-  const [path, setPath] = useState(window.location.pathname + window.location.search);
+  const [path, setPath] = useState(here());
   useEffect(() => {
-    const on = () => setPath(window.location.pathname + window.location.search);
+    const on = () => setPath(here());
     window.addEventListener("popstate", on);
     window.addEventListener("app:navigate", on);
     return () => {
@@ -19,9 +26,10 @@ export function usePath(): [string, (to: string, replace?: boolean) => void] {
 }
 
 export function navigate(to: string, replace = false) {
-  if (to === window.location.pathname + window.location.search) return;
-  if (replace) window.history.replaceState(null, "", to);
-  else window.history.pushState(null, "", to);
+  if (to === here()) return;
+  const full = BASE + to;
+  if (replace) window.history.replaceState(null, "", full);
+  else window.history.pushState(null, "", full);
   window.dispatchEvent(new Event("app:navigate"));
 }
 

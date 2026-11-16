@@ -65,7 +65,20 @@ export default function StylePage() {
       const r = await styleApi.analyze();
       setSuggestion(r.suggestion);
       setStyle((s) => (s ? { ...s, palette: r.palette, aiNotes: r.aiNotes || s.aiNotes, rhythm: r.rhythm ?? s.rhythm, aiSuggested: r.aiSuggested ?? s.aiSuggested } : s));
-      toast(r.seen ? "Claude ha mirado tus referencias: colores, estilo y ritmo" : "Colores y ritmo sacados de tus referencias");
+      if (r.pending) {
+        // En el panel, Claude mira las referencias desde tu PC: se espera su respuesta
+        toast("Colores y ritmo listos. Claude está mirando tus referencias desde tu PC…", "info");
+        const before = r.style.aiNotes;
+        for (let i = 0; i < 40; i++) {
+          await new Promise((ok) => setTimeout(ok, 6000));
+          const g = await styleApi.get().catch(() => null);
+          if (g && g.style.aiNotes && g.style.aiNotes !== before) {
+            setStyle((s) => (s ? { ...s, aiNotes: g.style.aiNotes, aiSuggested: g.style.aiSuggested ?? s.aiSuggested } : s));
+            toast("Claude ha mirado tus referencias: ya puedes aplicar su estilo");
+            break;
+          }
+        }
+      } else toast(r.seen ? "Claude ha mirado tus referencias: colores, estilo y ritmo" : "Colores y ritmo sacados de tus referencias");
     } catch (e) { toast((e as Error).message, "bad"); } finally { setAnalyzing(false); }
   }
 

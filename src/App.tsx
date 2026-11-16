@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, LayoutGrid, Link2, Paintbrush, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
+import { IN_PANEL } from "./base";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
 import Videos from "./pages/Videos";
@@ -27,11 +28,16 @@ const NAV = [
 export default function App() {
   const [path] = usePath();
   const [online, setOnline] = useState(true);
+  const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null } | null>(null);
   const pathname = path.split("?")[0];
 
   // ¿Está el servidor local encendido?
   useEffect(() => {
-    const check = () => fetch("/api/platforms").then((r) => setOnline(r.ok)).catch(() => setOnline(false));
+    const check = () => {
+      fetch("/api/platforms").then((r) => setOnline(r.ok)).catch(() => setOnline(false));
+      // En el panel: ¿está tu PC encendido para editar?
+      if (IN_PANEL) fetch("/api/autoedit/info").then((r) => r.json()).then((i) => setPc(i.worker ?? null)).catch(() => {});
+    };
     check();
     const t = setInterval(check, 15000);
     return () => clearInterval(t);
@@ -76,8 +82,17 @@ export default function App() {
           );
         })}
         <div className="side__foot">
-          <span className={"dot" + (online ? "" : " is-off")} />
-          {online ? "Servidor local activo" : "Servidor apagado: ejecuta npm run dev"}
+          {IN_PANEL ? (
+            <>
+              <span className={"dot" + (pc?.online ? "" : " is-off")} />
+              {!online ? "Sin conexión con el servidor" : pc?.online ? (pc.busy ? `Tu PC: ${pc.busy}` : "Tu PC está listo para editar") : "Tu PC está apagado: los vídeos esperan en cola"}
+            </>
+          ) : (
+            <>
+              <span className={"dot" + (online ? "" : " is-off")} />
+              {online ? "Servidor local activo" : "Servidor apagado: ejecuta npm run dev"}
+            </>
+          )}
         </div>
       </aside>
       <main className="main">{page}</main>

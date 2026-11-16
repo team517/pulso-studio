@@ -41,7 +41,7 @@ export const styleApi = {
     return req<StyleAsset[]>("POST", "/api/style/assets", fd);
   },
   remove: (id: string) => req("DELETE", `/api/style/assets/${id}`),
-  analyze: () => req<{ palette: PaletteColor[]; suggestion: Partial<EditStyle["colors"]>; aiNotes: string; seen: boolean; rhythm: EditStyle["rhythm"]; aiSuggested: EditStyle["aiSuggested"]; style: EditStyle }>("POST", "/api/style/analyze"),
+  analyze: () => req<{ palette: PaletteColor[]; suggestion: Partial<EditStyle["colors"]>; aiNotes: string; seen: boolean; pending?: boolean; rhythm: EditStyle["rhythm"]; aiSuggested: EditStyle["aiSuggested"]; style: EditStyle }>("POST", "/api/style/analyze"),
 };
 
 /** Nombre CSS con el que se carga cada fuente subida (para la vista previa). */

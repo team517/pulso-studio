@@ -3,6 +3,7 @@
 import { readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { basename } from "node:path";
 import { getSetting, setSetting } from "./db.js";
+import { IS_SERVER, BASE, signedPath } from "./config.js";
 
 export const PORT = Number(process.env.STUDIO_PORT || 4321);
 const LOCAL = `http://localhost:${PORT}`;
@@ -17,8 +18,9 @@ export const getConf = (p) => getSetting(key(p), {});
 const saveConf = (p, c) => setSetting(key(p), c);
 
 /** Dirección pública para las vueltas de OAuth (TikTok exige https: se puede poner un túnel). */
-export const publicUrl = () => (getSetting("public_url", "") || LOCAL).replace(/\/$/, "");
-export const redirectUri = (p) => `${p === "youtube" ? LOCAL : publicUrl()}/api/auth/${p}/callback`;
+// En el servidor, la dirección pública es la del panel (PUBLIC_URL, p. ej. https://…easypanel.host/studio)
+export const publicUrl = () => (getSetting("public_url", "") || (IS_SERVER ? process.env.PUBLIC_URL || "" : "") || LOCAL).replace(/\/$/, "");
+export const redirectUri = (p) => `${p === "youtube" && !IS_SERVER ? LOCAL : publicUrl()}/api/auth/${p}/callback`;
 
 async function asJson(res, what) {
   const text = await res.text();
@@ -295,7 +297,10 @@ async function publishInstagram(post, file) {
   if (c.mode === "instagram") {
     const pub = publicUrl();
     if (!/^https:\/\//.test(pub)) throw new Error("Con el token de Instagram, Meta necesita un enlace público al vídeo: pon la «Dirección pública» en Conexiones (o conecta con Facebook).");
-    body.video_url = `${pub}/files/exports/${basename(file)}`;
+    // En el servidor los archivos piden sesión: a Meta se le da un enlace firmado que caduca
+    body.video_url = IS_SERVER
+      ? `${new URL(pub).origin}${signedPath(`${BASE}/files/exports/${basename(file)}`)}`
+      : `${pub}/files/exports/${basename(file)}`;
   } else {
     body.upload_type = "resumable";
   }
