@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { db, DIRS, DATA, uid, now, row } from "../db.js";
 import { run, makeThumb } from "../media.js";
+import { python } from "../python.js";
 import { onGpu } from "../gpu.js";
 import { NeedLogin, askClaude, claudeReady, canSeeImages } from "./brain.js";
 import { ffStderr } from "./analysis.js";
@@ -51,7 +52,7 @@ const setItem = (id, f) => {
 };
 
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
-const py = (script, args, opts) => run("python", [join(PY, script), ...args], opts);
+const py = (script, args, opts) => run(python().cmd, [join(PY, script), ...args], { env: python().env, ...opts });
 const link = (from, to) => { if (existsSync(to)) return; try { linkSync(from, to); } catch { copyFileSync(from, to); } };
 
 /* ---------- Crear trabajos ---------- */

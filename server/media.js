@@ -5,13 +5,14 @@ import { fileURLToPath } from "node:url";
 import { db, DIRS } from "./db.js";
 import { onGpu } from "./gpu.js";
 import { IS_SERVER } from "./config.js";
+import { python } from "./python.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Ejecuta un proceso y devuelve stdout (rechaza con stderr si falla). */
-export function run(cmd, args, { onStdout, onStderr, cwd } = {}) {
+export function run(cmd, args, { onStdout, onStderr, cwd, env } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true, cwd });
+    const p = spawn(cmd, args, { windowsHide: true, cwd, ...(env ? { env } : {}) });
     const out = [], err = [];
     p.stdout.on("data", (d) => { out.push(d); onStdout?.(String(d)); });
     p.stderr.on("data", (d) => { err.push(d); onStderr?.(String(d)); });
@@ -71,7 +72,7 @@ export function transcribeNow(mediaId, language = "es") {
   if (!m) return Promise.resolve();
   db.prepare("UPDATE media SET transcript_status = 'running' WHERE id = ?").run(mediaId);
   const file = join(DIRS.media, m.file);
-  const job = onGpu(() => run("python", [join(HERE, "transcribe.py"), file, language]))
+  const job = onGpu(() => run(python().cmd, [join(HERE, "transcribe.py"), file, language], { env: python().env }))
     .then((out) => {
       const line = out.trim().split("\n").pop();
       const words = JSON.parse(line);
