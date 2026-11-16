@@ -144,9 +144,10 @@ Si los hay, da las ZONAS donde aparecen (unión de todas las posiciones de cada 
 Responde SOLO JSON: {"burned": true|false, "kind": "subtítulos|titular|interfaz|marca de agua", "zones": [[x,y,w,h]], "note": "una frase"}`, { images: frames, dir, timeoutMs: 4 * 60e3, maxTurns: frames.length + 4 });
     const zones = (Array.isArray(r.zones) ? r.zones : []).filter((z) => Array.isArray(z) && z.length === 4 && z.every((n) => Number.isFinite(Number(n))))
       .map((z) => z.map(Number)).filter(([, , w, h]) => w > 0.03 && h > 0.015 && w * h < 0.45).slice(0, 4);
-    if (r.burned && zones.length) res = { boxes: zones, note: `Tu vídeo ya traía ${r.kind || "textos"} de otra edición: los he difuminado para que no choquen con los nuevos. Para el mejor resultado, sube la toma original sin editar.` };
+    if (r.burned && zones.length) res = { boxes: zones, note: `Tu vídeo ya traía ${r.kind || "textos"} de otra edición y se verán junto a los nuevos. Para que quede perfecto, sube la toma original sin editar.` };
   } catch (e) { if (e instanceof NeedLogin) throw e; console.warn("[autoedit] comprobar textos quemados:", e.message); }
-  if (res.boxes.length) {
+  // Sin tapar nada (una franja borrosa queda peor): solo se avisa
+  if (false && res.boxes.length) {
     setJob(job.id, { step: "Difuminando los textos que ya traía el vídeo", progress: 0.07 });
     const W = 1080, H = 1920, even = (n) => Math.max(2, Math.round(n / 2) * 2);
     const parts = [], chain = [];

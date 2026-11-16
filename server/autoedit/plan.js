@@ -285,7 +285,24 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
   const E = (i) => words[Math.min(words.length - 1, Math.max(0, i))].end;
   // Estilo sin gráficos: solo subtítulos y zooms, pase lo que pase en el plan
   const noGraphics = style?.graphics === "none";
-  const pick = noGraphics ? [] : plan.graphics.filter((g) => g.layouts.includes(variant.layout));
+  // Edición de editor, no de plantilla:
+  //  · con un estilo copiado de tus referencias, solo sus gráficos (nada de anillos, iconos ni pantallas genéricas)
+  //  · cada tipo de gráfico una vez como mucho; la pantalla completa solo con «muchos gráficos»
+  //  · nunca un gráfico que repite lo que dice el subtítulo en ese momento (p. ej. el mismo número)
+  const tpls = Array.isArray(style?.templates) ? style.templates : [];
+  const copied = !!style?.fromPreset;
+  const seenType = new Set();
+  const chunkText = (g) => words.slice(g.from, Math.min(words.length, g.to + 1)).map((w) => w.w).join(" ").toLowerCase();
+  const pick = noGraphics ? [] : plan.graphics.filter((g) => g.layouts.includes(variant.layout)).filter((g) => {
+    if (copied && g.type !== "custom") return false;
+    if (g.type === "custom" && !tpls.some((t) => t.id === g.tpl)) return false;
+    if (g.type === "scene" && style?.graphics !== "many") return false;
+    const key = g.type === "custom" ? "custom:" + g.tpl : g.type;
+    if (seenType.has(key)) return false;
+    if (g.type === "stat" && chunkText(g).includes(String(g.value))) return false; // el número ya sale en el subtítulo
+    seenType.add(key);
+    return true;
+  });
   // Tiempos: entra 30 ms antes de su palabra; se queda hasta "to" + 0,6 s, sin pisar al siguiente
   const graphics = [];
   pick.forEach((g, k) => {
@@ -300,7 +317,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
     graphics.push(out);
   });
   // Palabras detrás de la cabeza: solo en la versión de referencia y si hay recorte
-  if (variant.layout === "reference" && !noGraphics) {
+  if (variant.layout === "reference" && !noGraphics && !copied) {
     for (const b of plan.behind) {
       const start = Math.max(0, T(b.from) - 0.03);
       const end = Math.min(duration, Math.max(start + 1.2, E(b.to) + 0.3));

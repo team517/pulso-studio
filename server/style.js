@@ -70,6 +70,7 @@ export function toRenderStyle() {
     ...(s.look ? { look: s.look } : {}),
     graphics: s.graphics, // lo usa plan.js (none = sin gráficos); el render lo ignora
     ...(Array.isArray(s.templates) && s.templates.length ? { templates: s.templates } : {}),
+    ...(s.activePreset ? { fromPreset: true } : {}),
     logo: logoA ? { file: join(STYLE_DIR, logoA.file), position: s.logo.position || "top-right", size: Math.min(0.2, Math.max(0.06, Number(s.logo.size) || 0.1)) } : null,
   };
 }
@@ -82,6 +83,9 @@ export function styleNotesForAI() {
   if (s.graphics === "few") parts.push("Pocos gráficos: como mucho 2-3 en todo el vídeo, solo donde aporten un dato que NO dice el subtítulo.");
   if (s.graphics === "many") parts.push("Muchos gráficos: casi cada idea con su gráfico, ritmo alto.");
   if (s.caption.uppercase) parts.push("Los textos de pantalla van en MAYÚSCULAS.");
+  if (s.activePreset && !(Array.isArray(s.templates) && s.templates.length)) parts.push("ESTILO COPIADO DE REFERENCIAS SIN GRÁFICOS PROPIOS: no pongas tarjetas, anillos, iconos ni escenas (graphics vacío). Lo importante va en el SUBTÍTULO como palabra clave (cifras y palabras fuertes) y en los zooms.");
+  if (s.activePreset && Array.isArray(s.templates) && s.templates.length) parts.push("Usa SOLO los gráficos copiados de las referencias (type custom); ningún otro tipo.");
+  parts.push("Edición de editor humano, no de plantilla: nunca el mismo tipo de gráfico dos veces, nunca un gráfico que diga lo mismo que el subtítulo en ese momento, y deja respirar el vídeo (la cara y los subtítulos mandan).");
   if (Array.isArray(s.templates) && s.templates.length && s.graphics !== "none") {
     parts.push(`GRÁFICOS COPIADOS DE TUS REFERENCIAS (úsalos EN VEZ de card/checklist/stat cuando encajen; mismo diseño que el original): `
       + s.templates.map((t) => `{"type":"custom","tpl":"${t.id}","from":i,"to":j,${t.hasIcon ? `"icon":"${t.icon || "star"}",` : ""}"fields":{${t.fields.map((f) => `"${f.key}":"máx. ${f.max} letras, p. ej. ${f.example}"`).join(",")}}} → ${t.name}${t.use ? ` (${t.use})` : ""}`).join(" · "));
