@@ -74,10 +74,11 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 export const api = {
   media: () => req<Media[]>("GET", "/api/media"),
   mediaOne: (id: string) => req<Media>("GET", `/api/media/${id}`),
-  upload: (files: File[]) => {
+  /** auto: true → si está activado en «Estilo de edición», cada vídeo empieza a auto-editarse al subirlo */
+  upload: (files: File[], opts: { auto?: boolean } = {}) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    return req<Media[]>("POST", "/api/media", fd);
+    return req<(Media & { autoeditJob?: string })[]>("POST", "/api/media" + (opts.auto ? "?auto=1" : ""), fd);
   },
   deleteMedia: (id: string) => req("DELETE", `/api/media/${id}`),
   transcribe: (id: string, language = "es") => req("POST", `/api/media/${id}/transcribe`, { language }),

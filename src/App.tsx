@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, Link2, Sparkles } from "lucide-react";
+import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, LayoutGrid, Link2, Paintbrush, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
@@ -8,11 +8,15 @@ import Calendar from "./pages/Calendar";
 import Connections from "./pages/Connections";
 import AutoEdit from "./pages/AutoEdit";
 import Results from "./pages/Results";
+import Edited from "./pages/Edited";
+import StylePage from "./pages/Style";
 import Editor from "./editor/Editor";
 
 const NAV = [
   { path: "/autoedicion", label: "Auto-edición", icon: Sparkles, group: "Crear" },
-  { path: "/", label: "Proyectos", icon: Clapperboard, group: "Crear" },
+  { path: "/editados", label: "Editados", icon: LayoutGrid, group: "Crear" },
+  { path: "/estilo", label: "Estilo de edición", icon: Paintbrush, group: "Crear" },
+  { path: "/", label: "Editor manual", icon: Clapperboard, group: "Crear" },
   { path: "/biblioteca", label: "Biblioteca", icon: FolderOpen, group: "Crear" },
   { path: "/videos", label: "Vídeos exportados", icon: Film, group: "Crear" },
   { path: "/calendario", label: "Calendario", icon: CalendarDays, group: "Publicar" },
@@ -43,6 +47,8 @@ export default function App() {
   else if (pathname === "/conexiones") page = <Connections />;
   else if (pathname === "/autoedicion") page = <AutoEdit />;
   else if (pathname === "/resultados") page = <Results />;
+  else if (pathname === "/editados") page = <Edited />;
+  else if (pathname === "/estilo") page = <StylePage />;
 
   let lastGroup = "";
   return (

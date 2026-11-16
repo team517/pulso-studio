@@ -1,7 +1,7 @@
 // Lo que decide Claude (cortes, frases, palabras clave, gráficos, zooms, gancho, texto de la publicación)
 // y cómo se convierte en la entrada del renderizador (CONTRACT.md). Con reglas fijas si no hay Claude.
 import { askClaude, NeedLogin, lastProvider } from "./brain.js";
-import { findIssues, heuristicDrops } from "./analysis.js";
+import { findIssues, heuristicDrops, safeDrops } from "./analysis.js";
 
 /* ---------- Las 5 versiones ---------- */
 
@@ -28,7 +28,7 @@ export async function decideCuts(words, { vocab = "", useClaude = true } = {}) {
   if (useClaude) {
     try {
       const prompt = `Eres editor de vídeo profesional de reels en español. Te paso la transcripción palabra a palabra de una toma hablada a cámara (índice, segundo, palabra; "(?)" = Whisper no está seguro).
-Decide qué QUITAR para que quede fluido: tomas falsas (cuando repite una frase, quédate con la ÚLTIMA buena), arranques fallidos, muletillas («eh», «em», «o sea» sueltos), tartamudeos y frases cortadas que luego repite. NO quites contenido con sentido. Las pausas se quitan solas, no hace falta que las marques.
+Decide qué QUITAR para que quede fluido: tomas falsas (cuando repite una frase, quédate con la ÚLTIMA buena), arranques fallidos, muletillas («eh», «em», «o sea» sueltos), tartamudeos y frases cortadas que luego repite. NO quites contenido con sentido y NUNCA quites negaciones («no», «sin», «ni», «nunca»…) ni palabras que cambien lo que se dice. Si dudas, no lo quites. Las pausas se quitan solas, no hace falta que las marques.
 Corrige también palabras que Whisper ha oído MAL (nombres, marcas, términos técnicos que no existen como «Codefemail» → «cold email»). NUNCA cambies cifras, años, fechas ni datos que suenan bien escritos: no corrijas lo que dice la persona, solo lo que Whisper transcribió mal.${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
 
 Pausas largas detectadas (después de la palabra): ${JSON.stringify(pauses.slice(0, 200))}
@@ -41,7 +41,7 @@ Responde SOLO con JSON:
 {"drop": [[desde, hasta], ...], "fixes": {"palabraMal": "palabraBien"}, "resumen": "una frase con lo que has quitado"}
 ("desde" y "hasta" son índices incluidos. "fixes" con la palabra exacta tal como aparece; valor null para borrarla.)`;
       const r = await askClaude(prompt);
-      const drop = (Array.isArray(r.drop) ? r.drop : []).filter((d) => Array.isArray(d) && d.length === 2 && d[0] <= d[1] && d[0] >= 0 && d[1] < words.length);
+      const drop = safeDrops(words, (Array.isArray(r.drop) ? r.drop : []).filter((d) => Array.isArray(d) && d.length === 2 && d[0] <= d[1] && d[0] >= 0 && d[1] < words.length));
       return { drop, fixes: r.fixes && typeof r.fixes === "object" ? r.fixes : {}, summary: r.resumen || "", brain: lastProvider() || "claude" };
     } catch (e) {
       if (!(e instanceof NeedLogin)) console.warn("[autoedit] cortes con Claude fallaron, uso reglas:", e.message);
@@ -64,7 +64,7 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 - icons: {"type":"icons","from":i,"to":j,"items":[{"icon":"gear","label":"Automatiza","at":k},...]}   (2-4)
 - scene: {"type":"scene","from":i,"to":j,"kicker":"ASÍ FUNCIONA","title":"Tu sistema","steps":[{"icon":"target","label":"Buscamos clientes","at":k},...]}   (pantalla completa, 2-4 pasos; tapa a la persona: úsala 1 vez en un tramo explicativo de 4-8 s)`;
 
-export async function makePlan(words, { vocab = "", useClaude = true, isShort = false } = {}) {
+export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "" } = {}) {
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
     try {
@@ -80,7 +80,10 @@ Devuelve el plan de edición. Reglas:
 3. "behind": 2-3 palabras gigantes (1 palabra, MAYÚSCULAS, la idea fuerte) que salen detrás de la cabeza durante 1-2 s en su palabra; no coincidan con gráficos.
 4. "zooms": 4-8 zooms suaves (to entre 1.03 y 1.10) hacia los momentos importantes; el primero a 0 con to 1.0 (el gancho se asienta desde 1.08).
 5. "hook": titular corto y potente (máx. 6 palabras) que resuma el valor del vídeo, y subtítulo opcional (máx. 5 palabras).
-6. "post": texto para publicar (2-4 líneas que inviten a ver el vídeo, en español, y 3-5 hashtags al final) y "youtubeTitle" (máx. 70 caracteres).${isShort ? "\n7. Es un short sacado de un vídeo más largo: el gancho tiene que funcionar sin contexto." : ""}
+${styleNotes ? `ESTILO DEL USUARIO (manda sobre lo demás):
+${styleNotes}
+
+` : ""}6. "post": texto para publicar (2-4 líneas que inviten a ver el vídeo, en español, y 3-5 hashtags al final) y "youtubeTitle" (máx. 70 caracteres).${isShort ? "\n7. Es un short sacado de un vídeo más largo: el gancho tiene que funcionar sin contexto." : ""}
 
 ${GRAPHIC_HELP}
 
@@ -261,7 +264,7 @@ export function buildCaptions(plan, words) {
 }
 
 /** Entrada de renderVariant para una versión. */
-export function renderInputFor(variant, plan, words, { workDir, base, duration }) {
+export function renderInputFor(variant, plan, words, { workDir, base, duration, style = null }) {
   const T = (i) => words[Math.min(words.length - 1, Math.max(0, i))].start;
   const E = (i) => words[Math.min(words.length - 1, Math.max(0, i))].end;
   const pick = plan.graphics.filter((g) => g.layouts.includes(variant.layout));
@@ -296,6 +299,7 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration }
     captions: buildCaptions(plan, words),
     hook: ["headline", "horizontal", "framed"].includes(variant.layout) ? plan.hook : null,
     graphics, zooms, captionStyle: variant.captionStyle, theme: variant.theme, hideCaptionsDuring: hide,
+    ...(style ? { style } : {}),
   };
 }
 

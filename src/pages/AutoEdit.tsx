@@ -46,6 +46,7 @@ export default function AutoEdit() {
       </div>
 
       {info && !info.claude && <ClaudeLoginNote />}
+      {info && <DropToEdit variants={info.variants.map((v) => v.key)} onStarted={load} />}
 
       {jobs === null ? <p className="muted">Cargando…</p> : jobs.length === 0 ? (
         <div className="empty">
@@ -74,6 +75,44 @@ function ClaudeLoginNote() {
         <b>No hay ninguna IA disponible.</b> Es la que decide los cortes, las palabras clave y qué gráfico va en cada frase. Sin ella se edita con reglas fijas y queda bastante peor.
       </div>
     </div>
+  );
+}
+
+/* ---------- Soltar un vídeo y que empiece solo ---------- */
+
+function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: () => void }) {
+  const toast = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const [busy, setBusy] = useState(0);
+  async function go(files: File[]) {
+    const vids = files.filter((f) => f.type.startsWith("video/") || /.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
+    if (!vids.length) return toast("Suelta un vídeo (MP4, MOV…).", "bad");
+    setBusy(vids.length);
+    try {
+      const up = await api.upload(vids);
+      let started = 0;
+      for (const m of up.filter((x) => x.kind === "video")) {
+        if (!m.has_audio) { toast(`«${m.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"); continue; }
+        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: 3, allowRules: true });
+        started++;
+      }
+      if (started) toast(started === 1 ? "Subido: ya se está editando. Las versiones irán apareciendo aquí." : `${started} vídeos subidos y editándose.`);
+      onStarted();
+    } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(0); }
+  }
+  return (
+    <button type="button" className={"ae-drop" + (over ? " is-over" : "")} onClick={() => input.current?.click()} disabled={!!busy}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setOver(true); } }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); go([...e.dataTransfer.files]); }}>
+      <span className="ae-drop__icon">{busy ? <Loader2 size={24} className="spin" /> : <Upload size={24} />}</span>
+      <span>
+        <b>{busy ? "Subiendo…" : "Suelta aquí tu vídeo y se edita solo"}</b>
+        <small>Se cortan los silencios, se ponen subtítulos, gráficos, zooms, efectos y música con tu estilo de edición. Si dura más de 2,5 minutos, salen shorts.</small>
+      </span>
+      <input ref={input} type="file" hidden accept="video/*" multiple onChange={(e) => { go([...(e.target.files ?? [])]); e.target.value = ""; }} />
+    </button>
   );
 }
 

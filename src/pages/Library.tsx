@@ -10,7 +10,7 @@ export default function Library() {
   const [del, setDel] = useState<Media | null>(null);
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const { upload, busy } = useUploader((m) => setList((l) => [...m, ...(l ?? [])]));
+  const { upload, busy } = useUploader((m) => setList((l) => [...m, ...(l ?? [])]), { auto: true });
 
   const load = () => api.media().then(setList).catch((e) => { setList([]); toast(e.message, "bad"); });
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps

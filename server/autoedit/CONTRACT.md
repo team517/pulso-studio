@@ -68,3 +68,29 @@ type RenderOutput = {
 - Palabra clave: Anton, oro, grande; resto: fuente de subtítulo media. Fuentes locales con `@font-face`.
 - Una idea en pantalla cada vez; oculta subtítulos cuando el gráfico ya lo dice.
 - Selectores literales en el JS generado (nada de `` `#${id}` `` dentro de las composiciones).
+
+## Estilo de edición del usuario (`RenderInput.style`, opcional)
+
+El usuario define su estilo en la pantalla «Estilo de edición» (fuentes, colores, tarjetas, animación, logo, referencias).
+Si `style` viene, manda sobre los valores por defecto del diseño (y sobre `theme` en los colores que traiga).
+
+```ts
+type FontRef = { family: string; file: string /* ruta absoluta .ttf/.otf/.woff/.woff2 */; weight?: number };
+type UserStyle = {
+  fonts?: { caption?: FontRef; keyword?: FontRef; title?: FontRef };      // subtítulos · palabra clave · titulares y tarjetas
+  colors?: { accent?: string; accent2?: string; keyword?: string; caption?: string; bg?: string }; // HEX
+  caption?: {
+    size?: "s" | "m" | "l";                                // tamaño de los subtítulos
+    uppercase?: boolean;                                   // todo en mayúsculas
+    position?: "auto" | "high" | "low";                    // auto = la del layout; high = más cerca de la barbilla; low = más abajo (dentro de la zona segura)
+    animation?: "soft" | "pop" | "typewriter" | "word";    // soft = la actual; pop = escala con rebote suave; typewriter = letra a letra; word = palabra a palabra
+    keywordStyle?: "big" | "highlight" | "box";            // big = Anton grande (actual); highlight = mismo tamaño en color; box = caja de color detrás
+  };
+  cards?: { look?: "glass" | "solid" | "light" };          // glass = cristal (actual); solid = color sólido oscuro; light = tarjeta blanca con sombra (como la escena blanca de la referencia)
+  motion?: { intensity?: 1 | 2 | 3 };                      // 1 = sobrio (menos rebote y zoom), 2 = actual, 3 = enérgico (más rebote, zooms más marcados, más movimiento)
+  logo?: { file: string; position: "top-left" | "top-right" | "bottom-left" | "bottom-right"; size: number /* 0.06-0.2 del ancho */ } | null;
+};
+```
+Reglas: con fuentes del usuario, se cargan con `@font-face` desde una copia dentro del proyecto HyperFrames (nada de rutas fuera);
+el ajuste automático de tamaños tiene que seguir funcionando con la fuente del usuario (medir con un margen mayor si no se puede medir);
+el logo nunca tapa la cara ni la zona segura; los colores tienen que tener contraste suficiente (si no, se oscurece/aclara el fondo de la tarjeta).

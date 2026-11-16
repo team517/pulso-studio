@@ -6,16 +6,18 @@ import { useToast } from "../ui";
 
 export const ACCEPT = "video/*,audio/*,image/jpeg,image/png,image/webp";
 
-export function useUploader(onDone: (m: Media[]) => void) {
+export function useUploader(onDone: (m: Media[]) => void, { auto = false }: { auto?: boolean } = {}) {
   const toast = useToast();
   const [busy, setBusy] = useState(0);
   async function upload(files: File[]) {
     if (!files.length) return;
     setBusy(files.length);
     try {
-      const out = await api.upload(files);
+      const out = await api.upload(files, { auto });
       if (out.length < files.length) toast(`${files.length - out.length} archivo(s) no se pudieron leer (¿formato raro?).`, "bad");
-      if (out.length) toast(out.length === 1 ? `«${out[0].name}» subido` : `${out.length} archivos subidos`);
+      const editing = out.filter((m) => m.autoeditJob).length;
+      if (editing) toast(editing === 1 ? `«${out.find((m) => m.autoeditJob)!.name}» subido: ya se está editando solo` : `${editing} vídeos subidos: ya se están editando solos`);
+      else if (out.length) toast(out.length === 1 ? `«${out[0].name}» subido` : `${out.length} archivos subidos`);
       onDone(out);
     } catch (e) {
       toast((e as Error).message, "bad");

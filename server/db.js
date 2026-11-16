@@ -41,7 +41,7 @@ db.exec(`
 export const uid = () => randomUUID();
 export const now = () => new Date().toISOString();
 
-const JSON_COLS = new Set(["transcript", "data", "platforms", "options", "results"]);
+const JSON_COLS = new Set(["transcript", "data", "platforms", "options", "results", "plan", "qa", "post", "short"]);
 /** Convierte las columnas JSON de una fila a objetos. */
 export function row(r) {
   if (!r) return null;

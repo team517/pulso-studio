@@ -76,33 +76,60 @@ export function keepSegments(words, drops, en, totalDur) {
   const dropped = new Set();
   for (const [a, b] of drops) for (let i = a; i <= b; i++) dropped.add(i);
   const groups = [];
-  let cur = null;
+  let cur = null, cutNext = false;
   words.forEach((w, i) => {
-    if (dropped.has(i)) { if (cur) { groups.push(cur); cur = null; } return; }
+    if (dropped.has(i)) { if (cur) { cur.dropAfter = true; groups.push(cur); cur = null; } cutNext = true; return; }
     if (cur && w.start - words[cur.last].end <= CUT.pause) cur.last = i;
-    else { if (cur) groups.push(cur); cur = { first: i, last: i }; }
+    else { if (cur) groups.push(cur); cur = { first: i, last: i, dropBefore: cutNext }; }
+    cutNext = false;
   });
   if (cur) groups.push(cur);
 
   const loud = (t0, t1) => en.filter((e) => e.t >= t0 && e.t < t1 && e.db > CUT.energyDb);
-  const segs = groups.map(({ first, last }) => {
+  const segs = groups.map(({ first, last, dropBefore, dropAfter }) => {
     const ws = words[first], we = words[last];
-    // Inicio: donde empieza la energía alrededor de la primera palabra
-    const pre = loud(ws.start - 0.3, ws.start + 0.1);
-    let s = (pre.length ? Math.min(ws.start, pre[0].t) : ws.start) - CUT.breath;
-    // Final: la última ventana con voz dentro de la última palabra (Whisper la estira sobre el silencio)
-    const post = loud(we.start, we.end + 0.25);
-    let e = (post.length ? post[post.length - 1].t + 0.05 : we.end) + CUT.breath;
+    let s, e;
+    if (dropBefore) {
+      // Justo después de una palabra quitada: se corta pegado, sin respiración (si no, se colaría lo quitado)
+      s = Math.max(ws.start - 0.03, words[first - 1] ? words[first - 1].end : 0);
+    } else {
+      // Inicio: donde empieza la energía alrededor de la primera palabra
+      const pre = loud(ws.start - 0.3, ws.start + 0.1);
+      s = (pre.length ? Math.min(ws.start, pre[0].t) : ws.start) - CUT.breath;
+    }
+    if (dropAfter) {
+      e = Math.min(we.end + 0.03, words[last + 1] ? words[last + 1].start : totalDur);
+    } else {
+      // Final: la última ventana con voz dentro de la última palabra (Whisper la estira sobre el silencio)
+      const post = loud(we.start, we.end + 0.25);
+      e = (post.length ? post[post.length - 1].t + 0.05 : we.end) + CUT.breath;
+    }
     s = Math.max(0, s);
     e = Math.min(totalDur, Math.max(e, we.start + 0.12));
-    return [snap(s), snap(e)];
+    return { seg: [snap(s), snap(e)], dropBefore };
   });
-  // Unir tramos casi pegados
+  // Unir tramos casi pegados (pero nunca a través de una palabra quitada)
   const out = [];
-  for (const sg of segs) {
+  for (const { seg, dropBefore } of segs) {
     const prev = out[out.length - 1];
-    if (prev && sg[0] - prev[1] < CUT.mergeGap) prev[1] = Math.max(prev[1], sg[1]);
-    else out.push([...sg]);
+    if (prev && !dropBefore && seg[0] - prev[1] < CUT.mergeGap) prev[1] = Math.max(prev[1], seg[1]);
+    else out.push([...seg]);
   }
   return out.filter(([s, e]) => e - s >= 0.2);
+}
+
+const NEGATION = /^(no|sin|ni|nunca|jamás|jamas|nada|nadie|tampoco)$/i;
+
+/**
+ * Seguridad: no se aceptan cortes que quiten negaciones u otras palabras que cambian el sentido,
+ * salvo que formen parte de una toma repetida (la misma frase se dice otra vez justo después).
+ */
+export function safeDrops(words, drops) {
+  const { repeats } = findIssues(words);
+  const inRepeat = (a, b) => repeats.some((r) => a >= r.from && b <= r.to);
+  return drops.filter(([a, b]) => {
+    if (b - a + 1 > Math.max(8, words.length * 0.25)) return false;          // nada de quitar trozos enormes
+    const hasNeg = words.slice(a, b + 1).some((w) => NEGATION.test(norm(w.w)));
+    return !hasNeg || inRepeat(a, b);
+  });
 }

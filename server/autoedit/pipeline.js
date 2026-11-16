@@ -11,6 +11,7 @@ import { ffStderr } from "./analysis.js";
 import { analyzeAudio, keepSegments } from "./analysis.js";
 void claudeReady;
 import { VARIANTS, decideCuts, makePlan, renderInputFor, pickShorts, validatePlan } from "./plan.js";
+import { toRenderStyle, styleNotesForAI, getStyle } from "../style.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, "py");
@@ -233,6 +234,7 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   const input = renderInputFor(variant, plan, words, {
     workDir: join(dir, "render"), duration,
     base: { video: join(work, "cut.mp4"), matte: variant.layout === "reference" ? matte : null, srcWidth: info.srcWidth, srcHeight: info.srcHeight },
+    style: toRenderStyle(),
   });
   writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
   const out = await renderVariant(input, (f, label) => setItem(item.id, { progress: Math.min(0.8, 0.02 + f * 0.78), step: label || "Renderizando" }));
@@ -250,7 +252,8 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   link(join(work, "words.json"), join(mixDir, "words.json"));
   link(join(work, "audio48k.wav"), join(mixDir, "audio48k.wav"));
   writeFileSync(join(mixDir, "sfx.json"), JSON.stringify(sfx, null, 1));
-  const music = await ensureMusic(join(ROOT, job.id), variant.music, duration);
+  const styleMusic = getStyle().music;
+  const music = await ensureMusic(join(ROOT, job.id), styleMusic && styleMusic !== "auto" ? styleMusic : variant.music, duration);
   const finalMp4 = join(dir, "final.mp4");
   await py("mix.py", ["--work", mixDir, "--sfx", join(mixDir, "sfx.json"), ...(music ? ["--music", music] : []), "--video", out.video, "--out", finalMp4]);
 
@@ -298,7 +301,7 @@ async function runJob(id) {
   let plan = job.plan;
   if (!plan) {
     setJob(id, { step: "Claude está planificando la edición", progress: 0.26 });
-    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude });
+    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: styleNotesForAI() });
     setJob(id, { plan, brain: plan.brain });
   }
   const variants = VARIANTS.filter((v) => opts.variants.includes(v.key));
@@ -361,7 +364,7 @@ async function runShorts(job, { src, raw, info, useClaude }) {
       let plan = it.post?.plan;
       if (!plan) {
         setItem(it.id, { step: "Planificando la edición", progress: 0.05 });
-        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true });
+        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: styleNotesForAI() });
         setItem(it.id, { post: { plan } });
       }
       const matte = plan.behind?.length ? await ensureMatte(job, work) : null;
@@ -416,6 +419,28 @@ export function jobView(id) {
     ...rest, plan: plan ? { topic: plan.topic, hook: plan.hook, post: plan.post, shorts: plan.shorts } : null,
     media: media ? { ...media, thumbUrl: media.thumb ? `/files/thumbs/${media.thumb}` : null } : null, items,
   };
+}
+
+/** Todos los vídeos editados (para la pantalla «Editados», por meses). */
+export function editedLibrary() {
+  const rows = db.prepare(`SELECT i.*, j.name AS job_name, j.plan AS job_plan, j.kind AS job_kind, j.media_id AS job_media
+    FROM autoedit_items i JOIN autoedit_jobs j ON j.id = i.job_id WHERE i.status = 'done' AND i.export_id IS NOT NULL ORDER BY i.updated_at DESC`).all();
+  return rows.map((r) => {
+    const it = row(r);
+    const e = db.prepare("SELECT id, name, file, thumb, duration, width, height, size, created_at FROM exports WHERE id = ?").get(it.export_id);
+    if (!e) return null;
+    let topic = null;
+    try { topic = JSON.parse(r.job_plan || "null")?.topic ?? null; } catch { /* sin plan */ }
+    const posts = db.prepare("SELECT id, status, scheduled_at, platforms FROM posts WHERE export_id = ? ORDER BY scheduled_at").all(e.id).map(row);
+    const { plan, ...post } = it.post || {};
+    void plan;
+    return {
+      id: it.id, jobId: it.job_id, label: it.label, layout: it.layout, review: it.review, qa: it.qa, post, short: it.short,
+      topic: topic || r.job_name, kind: r.job_kind, createdAt: e.created_at,
+      video: { ...e, url: `/files/exports/${e.file}`, thumbUrl: e.thumb ? `/files/thumbs/${e.thumb}` : null },
+      posts,
+    };
+  }).filter(Boolean);
 }
 
 export function listJobs() {

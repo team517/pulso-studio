@@ -10,6 +10,8 @@ import { createExport } from "./render.js";
 import { PORT, PLATFORMS, status as platformStatus, configure, disconnect, authUrl, handleCallback, publicUrl, checkInstagram, getConf } from "./platforms.js";
 import { startScheduler, runPost } from "./scheduler.js";
 import { registerAutoeditRoutes } from "./autoedit/routes.js";
+import { createJob } from "./autoedit/pipeline.js";
+import { registerStyleRoutes, getAutoSettings } from "./style.js";
 import { registerInsightsRoutes, startInsightsPoller } from "./insights.js";
 
 const app = express();
@@ -58,7 +60,17 @@ app.post("/api/media", upload.array("files", 50), wrap(async (req, res) => {
     db.prepare(`INSERT INTO media (id, name, kind, file, duration, width, height, has_audio, size, thumb, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, Buffer.from(f.originalname, "latin1").toString("utf8"), kind, f.filename,
       kind === "image" ? 5 : info.duration, info.width, info.height, info.hasAudio ? 1 : 0, f.size, thumb, now());
-    out.push(mediaOut(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
+    const saved = mediaOut(db.prepare("SELECT * FROM media WHERE id = ?").get(id));
+    // Subido desde la Biblioteca o Auto-edición (?auto=1): empieza la auto-edición sola
+    if (req.query.auto === "1" && kind === "video" && info.hasAudio && info.duration >= 5) {
+      const auto = getAutoSettings();
+      if (auto.enabled) {
+        try {
+          saved.autoeditJob = createJob(id, { kind: info.duration > 150 ? "shorts" : "variants", variants: auto.variants, shorts: auto.shorts || 3 });
+        } catch (e) { console.warn("[autoedit] no se pudo empezar sola:", e.message); }
+      }
+    }
+    out.push(saved);
   }
   res.json(out);
 }));
@@ -297,6 +309,10 @@ app.get("/api/auth/:p/callback", async (req, res) => {
 /* ---------- Auto-edición (5 versiones / shorts) ---------- */
 
 registerAutoeditRoutes(app, wrap);
+
+/* ---------- Estilo de edición ---------- */
+
+registerStyleRoutes(app, wrap);
 
 /* ---------- Resultados (visitas de cada publicación) ---------- */
 
