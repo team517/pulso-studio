@@ -43,7 +43,9 @@ function runClaude(args, input, timeoutMs) {
     const bin = claudeBin();
     const p = spawn(bin === "claude" ? "claude" : `"${bin}"`, args, { windowsHide: true, shell: true, env: cleanEnv() });
     const out = [], err = [];
-    const timer = setTimeout(() => { p.kill(); reject(new Error("Claude tardó demasiado en responder.")); }, timeoutMs);
+    // En Windows, con shell, matar solo el proceso dejaría claude.exe vivo: se cierra el árbol entero
+    const killTree = () => { try { if (process.platform === "win32") spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { windowsHide: true }); else p.kill(); } catch { /* ya terminó */ } };
+    const timer = setTimeout(() => { killTree(); reject(new Error("Claude tardó demasiado en responder.")); }, timeoutMs);
     p.stdout.on("data", (d) => out.push(d));
     p.stderr.on("data", (d) => err.push(d));
     p.on("error", (e) => { clearTimeout(timer); reject(e); });
@@ -76,9 +78,10 @@ const isAuthError = (t) => /log ?in|login|authenticate|oauth/i.test(String(t || 
 
 /** ¿Tiene Claude la sesión iniciada? (se guarda 5 min) */
 async function claudeLoggedIn() {
-  if (loginCache.ok !== null && Date.now() - loginCache.at < 5 * 60e3) return loginCache.ok;
+  // Con sesión se vuelve a mirar cada 5 min; sin sesión, cada 30 min (la comprobación tarda)
+  if (loginCache.ok !== null && Date.now() - loginCache.at < (loginCache.ok ? 5 : 30) * 60e3) return loginCache.ok;
   try {
-    const r = await runClaude(["-p", "--output-format", "json", "--max-turns", "1"], "Responde solo: ok", 60_000);
+    const r = await runClaude(["-p", "--output-format", "json", "--max-turns", "1"], "Responde solo: ok", 25_000);
     const j = JSON.parse(r.stdout);
     loginCache = { ok: !j.is_error, at: Date.now() };
   } catch {
