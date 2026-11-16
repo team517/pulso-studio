@@ -65,11 +65,26 @@ export type StylePreset = {
     look?: { grain: number; vignette: number; letterbox: boolean }; grade?: string; graphics?: string; music?: string;
     rhythm?: { cutsPerMin: number; seconds: number } | null; rules?: string[];
   } | null;
-  analysis: { summary: string; fonts?: Record<string, { families: string[]; seen: string } | null>; frames?: number } | null;
+  analysis: {
+    summary?: string; fonts?: Record<string, { families: string[]; seen: string } | null>; frames?: number;
+    progress?: PresetProgress; subtitles?: PresetSub[]; choice?: { subtitle: string | null; keyword: string | null };
+    zooms?: { video: number; name: string; zoomStyle?: string; zoomMax?: number; perMin?: number; list?: { t: number; kind: string; to: number; secs?: number }[] }[];
+  } | null;
   fonts: { caption: string | null; keyword: string | null } | null;
 };
 
+export type PresetProgress = { videos: { name: string; pct: number; step: string }[]; pct: number; step: string };
+/** Un estilo de texto encontrado en un vídeo de referencia (con recortes reales y la tira de su animación). */
+export type PresetSub = {
+  id: string; video: number; role: "subtitle" | "keyword" | "title" | "watermark" | "other"; label: string; count: number;
+  samples: { url: string; t: number; text: string }[]; strip: { url: string; from: number; fps: number } | null; fontPx: number;
+  font: { family: string | null; seen: string; weight: number; italic: boolean; alternatives: string[]; assetId: string | null; got?: string };
+  spec: { color: string; uppercase: boolean; stroke: { color: string; width: number } | null; shadow?: string; bg: { color: string; opacity: number; radius: number } | null; letterSpacing?: number; yPct?: number; maxWords?: number; lines?: number; keywordColor?: string | null };
+  animation: { type: string; inMs: number; wordByWord: boolean; notes: string } | null;
+};
+
 export const presetsApi = {
+  choose: (id: string, subtitle: string, keyword: string | null, use = true) => req<StylePreset>("POST", `/api/presets/${id}/choose`, { subtitle, keyword, use }),
   list: () => req<StylePreset[]>("GET", "/api/presets"),
   create: (name: string, files: File[], assetIds: string[] = []) => {
     const fd = new FormData();

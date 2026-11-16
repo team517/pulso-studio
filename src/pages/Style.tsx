@@ -1,14 +1,13 @@
 // Estilo de edición: lo que pongas aquí lo sigue cada auto-edición (fuentes, colores, subtítulos, tarjetas,
 // animación, logo, música e instrucciones). Vista previa en directo a la derecha.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ImagePlus, Loader2, Palette, Play, RotateCcw, Sparkles, Trash2, Type, Upload, Wand2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ImagePlus, Loader2, Palette, RotateCcw, Sparkles, Trash2, Type, Upload, Wand2 } from "lucide-react";
 import { styleApi, fontFamily, type AutoSettings, type EditStyle, type StyleAsset } from "../style-api";
 import { autoApi, type AutoVariant } from "../autoedit-api";
 import { Field, Switch, useToast } from "../ui";
 import Presets from "./Presets";
+import StylePreview from "./StylePreview";
 import "./style.css";
-
-const SAMPLE = { before: "Te garantizamos", key: "30 reuniones", after: "al mes" };
 
 export default function StylePage() {
   const toast = useToast();
@@ -249,11 +248,7 @@ export default function StylePage() {
         </div>
 
         <aside className="st-preview">
-          <div className="st-preview__head">
-            <b>Vista previa</b>
-            <button className="btn btn--ghost btn--sm" onClick={() => setReplay((n) => n + 1)}><Play size={13} /> Repetir</button>
-          </div>
-          <Phone style={style} fonts={fonts} logos={logos} replay={replay} />
+          <StylePreview style={style} fonts={fonts} logos={logos} replay={replay} />
           <button className="btn btn--sm btn--ghost" style={{ alignSelf: "center" }} onClick={() => { setStyle({ ...style, colors: { accent: "#4F8CFF", accent2: "#22D3EE", keyword: "#F2C84B", caption: "#FFFFFF", bg: "#070B18" }, caption: { size: "m", uppercase: false, position: "auto", animation: "soft", keywordStyle: "big" }, cards: { look: "glass" }, motion: { intensity: 2 }, fonts: { caption: null, keyword: null, title: null } }); }}>
             <RotateCcw size={13} /> Volver al estilo por defecto
           </button>
@@ -305,38 +300,4 @@ function UploadButton({ accept, multiple, label, onFiles }: { accept: string; mu
 function FontFaces({ fonts }: { fonts: StyleAsset[] }) {
   const css = fonts.map((f) => `@font-face { font-family: "${fontFamily(f)}"; src: url("${f.url}"); font-display: swap; }`).join("\n");
   return <style>{css}</style>;
-}
-
-/* ---------- Vista previa: un reel de mentira con tu estilo ---------- */
-
-function Phone({ style, fonts, logos, replay }: { style: EditStyle; fonts: StyleAsset[]; logos: StyleAsset[]; replay: number }) {
-  const f = (slot: keyof EditStyle["fonts"]) => {
-    const a = fonts.find((x) => x.id === style.fonts[slot]);
-    return a ? `"${fontFamily(a)}", sans-serif` : DEFAULT_FONT[slot];
-  };
-  const logo = style.logo ? logos.find((l) => l.id === style.logo!.id) : null;
-  const up = (s: string) => (style.caption.uppercase ? s.toUpperCase() : s);
-  const capSize = { s: 15, m: 18, l: 23 }[style.caption.size];
-  const top = { high: "58%", auto: "63%", low: "70%" }[style.caption.position];
-  const words = useMemo(() => [...SAMPLE.before.split(" ").map((w) => ({ w, key: false })), { w: SAMPLE.key, key: true }, ...SAMPLE.after.split(" ").map((w) => ({ w, key: false }))], []);
-  const anim = style.caption.animation;
-  const k = style.caption.keywordStyle;
-  return (
-    <div className="st-phone" style={{ ["--bg" as string]: style.colors.bg, ["--acc" as string]: style.colors.accent, ["--acc2" as string]: style.colors.accent2, ["--kw" as string]: style.colors.keyword, ["--cap" as string]: style.colors.caption, ["--int" as string]: String(style.motion.intensity) }}>
-      <div className="st-person" aria-hidden="true"><span className="st-head" /><span className="st-body" /><span className="st-mic" /></div>
-      <div key={"t" + replay} className="st-title" style={{ fontFamily: f("title") }}>{up("Cómo conseguir")} <em>{up("30 reuniones")}</em> {up("al mes")}</div>
-      <div key={"c" + replay} className={"st-cap st-cap--" + anim} style={{ top, fontFamily: f("caption"), fontSize: capSize }}>
-        {words.map((x, i) => (
-          <span key={i} className={x.key ? "st-kw st-kw--" + k : "st-w"} style={{ animationDelay: `${0.15 + i * (anim === "word" ? 0.28 : 0.06)}s`, ...(x.key ? { fontFamily: f("keyword") } : {}) }}>
-            {anim === "typewriter" ? [...up(x.w)].map((ch, j) => <i key={j} style={{ animationDelay: `${0.15 + i * 0.25 + j * 0.04}s` }}>{ch}</i>) : up(x.w)}
-          </span>
-        ))}
-      </div>
-      <div key={"g" + replay} className={"st-card st-card--" + style.cards.look} style={{ fontFamily: f("title") }}>
-        <span className="st-card__ic">✓</span>
-        <span><b>{up("30 reuniones")}</b><small>{up("al mes, garantizadas")}</small></span>
-      </div>
-      {logo && <img className={"st-wm st-wm--" + style.logo!.position} src={logo.url} alt="" style={{ width: `${style.logo!.size * 100}%` }} />}
-    </div>
-  );
 }

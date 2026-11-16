@@ -2,11 +2,22 @@
 // (subtítulos, tipografía, colores, zooms, look). Se guardan con sus vídeos y se aplican con un clic.
 import multer from "multer";
 import { join, extname, basename } from "node:path";
-import { existsSync, rmSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, rmSync, renameSync, mkdirSync, copyFileSync, readdirSync } from "node:fs";
 import { db, DATA, uid, now, row, getSetting, setSetting } from "./db.js";
 import { IS_SERVER } from "./config.js";
 import { isWorker } from "./auth.js";
 import { STYLE_DIR, DEFAULT_STYLE } from "./style.js";
+import { withChoice } from "./preset-style.js";
+
+/** Recortes y tiras de animación de un estilo: style/ps-<id>-<nombre> */
+const fileName = (id, name) => `ps-${id}-${basename(String(name)).replace(/[^\w.-]+/g, "_")}`;
+const dropFiles = (id) => { try { for (const f of readdirSync(STYLE_DIR)) if (f.startsWith(`ps-${id}-`)) rmSync(join(STYLE_DIR, f), { force: true }); } catch { /* nada */ } };
+/** Guarda el avance (vídeo a vídeo) dentro del análisis, sin borrar lo que ya había. */
+function setProgress(id, progress) {
+  const p = getPreset(id);
+  if (!p) return;
+  setPreset(id, { analysis: { ...parse(p.analysis, {}), progress } });
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS style_presets (
@@ -101,6 +112,20 @@ export function registerPresetRoutes(app, wrap) {
 
   app.post("/api/presets/:id/use", wrap((req, res) => { applyPreset(req.params.id); res.json({ ok: true }); }));
 
+  // Elegir qué subtítulo (y qué palabra clave) de los encontrados se copia
+  app.post("/api/presets/:id/choose", wrap((req, res) => {
+    const p = getPreset(req.params.id);
+    if (!p) throw Object.assign(new Error("No encuentro ese estilo."), { status: 404 });
+    const a = parse(p.analysis, {}), st = parse(p.style, null);
+    const subs = Array.isArray(a.subtitles) ? a.subtitles : [];
+    if (!st || !subs.length) throw Object.assign(new Error("Este estilo no tiene subtítulos encontrados. Vuelve a analizarlo."), { status: 409 });
+    const choice = { subtitle: String(req.body?.subtitle || ""), keyword: req.body?.keyword ? String(req.body.keyword) : null };
+    if (!subs.some((s) => s.id === choice.subtitle)) throw Object.assign(new Error("Ese subtítulo no existe."), { status: 400 });
+    setPreset(p.id, { style: withChoice(st, subs, choice), analysis: { ...a, choice } });
+    if (req.body?.use || getSetting("style:default", {}).activePreset === p.id) applyPreset(p.id);
+    res.json(presetOut(getPreset(p.id)));
+  }));
+
   app.post("/api/presets/:id/analyze", wrap((req, res) => {
     if (!getPreset(req.params.id)) throw Object.assign(new Error("No encuentro ese estilo."), { status: 404 });
     setPreset(req.params.id, { status: "queued", step: IS_SERVER ? "Esperando a tu PC (Claude)" : "En cola", error: null });
@@ -118,6 +143,7 @@ export function registerPresetRoutes(app, wrap) {
   app.delete("/api/presets/:id", wrap((req, res) => {
     const p = getPreset(req.params.id);
     if (p) {
+      dropFiles(p.id);
       // Se borran sus vídeos propios (no las referencias generales ni las fuentes que use otro estilo)
       for (const a of assetsOf(p)) if (a.kind === "preset") { rmSync(join(STYLE_DIR, a.file), { force: true }); db.prepare("DELETE FROM style_assets WHERE id = ?").run(a.id); }
       db.prepare("DELETE FROM style_presets WHERE id = ?").run(p.id);
@@ -127,7 +153,14 @@ export function registerPresetRoutes(app, wrap) {
     res.json({ ok: true });
   }));
 
-  if (!IS_SERVER) return;
+  if (!IS_SERVER) {
+    // Si el programa se reinició a mitad de un análisis, se retoma solo
+    for (const p of db.prepare("SELECT id FROM style_presets WHERE status IN ('queued', 'analyzing')").all()) {
+      setPreset(p.id, { status: "queued", step: "En cola (se retoma)" });
+      setTimeout(() => runLocal(p.id), 1500);
+    }
+    return;
+  }
 
   /* ---------- El PC (Claude) analiza ---------- */
   const guard = (req, res, next) => (isWorker(req) ? next() : res.status(401).json({ error: "Token del PC incorrecto." }));
@@ -145,6 +178,16 @@ export function registerPresetRoutes(app, wrap) {
     res.json({ id });
   }));
 
+  // Recortes de subtítulos y tiras de animación que saca tu PC
+  app.post("/api/worker/presets/:id/file", guard, fontUp.single("file"), wrap((req, res) => {
+    const f = req.file;
+    if (!f || !getPreset(req.params.id)) { if (f) rmSync(f.path, { force: true }); throw Object.assign(new Error("Falta el archivo."), { status: 400 }); }
+    const name = fileName(req.params.id, req.body.name || f.originalname || "recorte.jpg");
+    mkdirSync(STYLE_DIR, { recursive: true });
+    renameSync(f.path, join(STYLE_DIR, name));
+    res.json({ url: `/files/style/${name}` });
+  }));
+
   app.post("/api/worker/presets/:id/state", guard, wrap((req, res) => {
     const p = getPreset(req.params.id);
     if (!p) return res.json({ gone: true });
@@ -153,6 +196,7 @@ export function registerPresetRoutes(app, wrap) {
     for (const k of ["status", "step", "error"]) if (k in b) f[k] = b[k];
     if (b.style) f.style = b.style;
     if (b.analysis) f.analysis = b.analysis;
+    else if (b.progress) f.analysis = { ...parse(p.analysis, {}), progress: b.progress };
     if (b.name && p.name === "Estilo nuevo") f.name = String(b.name).slice(0, 40);
     setPreset(p.id, f);
     // Si era el estilo en uso, se actualiza con el análisis nuevo
@@ -181,26 +225,25 @@ async function runLocal(id) {
   try {
     const p = getPreset(id);
     if (!p) return;
-    setPreset(id, { status: "analyzing", step: "Claude está estudiando los vídeos fotograma a fotograma", error: null });
-    const { analyzePresetFiles, downloadGoogleFont } = await import("./preset-analyze.js");
-    const files = assetsOf(p).map((a) => join(STYLE_DIR, a.file)).filter(existsSync);
-    const r = await analyzePresetFiles(files, join(DATA, "tmp", "preset-" + id));
-    const fonts = {};
-    for (const role of ["caption", "keyword"]) {
-      const want = r.fontsWanted[role];
-      if (!want) continue;
-      setPreset(id, { step: `Descargando la tipografía (${want.families[0]})` });
-      const got = await downloadGoogleFont(want.families, want.weight, join(DATA, "tmp", "fonts"));
-      if (!got) continue;
+    setPreset(id, { status: "analyzing", step: "Claude está estudiando los vídeos uno a uno", error: null });
+    const { analyzePresetFiles, fetchFontsFor } = await import("./preset-analyze.js");
+    const assets = assetsOf(p);
+    const files = assets.map((a) => join(STYLE_DIR, a.file)).filter(existsSync);
+    const names = Object.fromEntries(assets.map((a) => [join(STYLE_DIR, a.file), a.name]));
+    dropFiles(id);
+    const r = await analyzePresetFiles(files, join(DATA, "tmp", "preset-" + id), {
+      names,
+      onProgress: (pr) => { setProgress(id, pr); setPreset(id, { step: pr.step }); },
+      saveFile: async (f, name) => { const n = fileName(id, name); copyFileSync(f, join(STYLE_DIR, n)); return `/files/style/${n}`; },
+    });
+    await fetchFontsFor(r, join(DATA, "tmp", "fonts"), async (got) => {
       const fid = uid();
       const ext = extname(got.file) || ".ttf";
       renameSync(got.file, join(STYLE_DIR, fid + ext));
       db.prepare("INSERT INTO style_assets (id, kind, name, file, family, created_at) VALUES (?, 'font', ?, ?, ?, ?)").run(fid, `${got.family} ${got.weight}${ext}`, fid + ext, got.family, now());
-      fonts[role] = fid;
-      if (role === "caption") r.style.caption.weight = got.weight;
-    }
-    r.style.fonts = { caption: fonts.caption || null, keyword: fonts.keyword || (r.style.caption.keywordFont === "same" ? fonts.caption || null : null), title: fonts.caption || null };
-    setPreset(id, { status: "ready", step: "Listo", style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw }, ...(p.name === "Estilo nuevo" ? { name: r.name } : {}) });
+      return fid;
+    }, (step) => setPreset(id, { step }));
+    setPreset(id, { status: "ready", step: "Listo", style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, choice: r.choice, zooms: r.zooms, videos: r.videos }, ...(p.name === "Estilo nuevo" ? { name: r.name } : {}) });
     if (getSetting("style:default", {}).activePreset === id) applyPreset(id);
   } catch (e) {
     console.error("[estilos]", e);

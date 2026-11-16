@@ -75,12 +75,12 @@ export function buildCaptions(input, geo, hidden) {
       spans += `<span id="${wid}" class="w">${inner}</span>`;
       const t = Math.max(s, Math.min(w.t ?? s, e - 0.1));
       if (boxed) { /* la caja entra entera con sus palabras (abajo) */ }
-      else if (anim === "pop") js.push(`ctl.fromTo("#${wid}", { opacity: 0, scale: .55 }, { opacity: 1, scale: 1, duration: 0.6, ease: ${vb(0.06)} }, ${r3(t)});`);
+      else if (anim === "pop") js.push(`ctl.fromTo("#${wid}", { opacity: 0, scale: .55 }, { opacity: 1, scale: 1, duration: ${cs.inMs ? r3(Math.min(0.9, Math.max(0.2, cs.inMs / 1000))) : 0.6}, ease: ${vb(0.06)} }, ${r3(t)});`);
       else if (anim === "typewriter") {
         const n = [...w.w].length, nt = k + 1 < c.words.length ? Math.min(c.words[k + 1].t ?? e, e) : e;
         const step = r3(Math.max(0.012, Math.min(0.05, ((nt - t) * 0.7) / Math.max(1, n))));
         js.push(`ctl.fromTo("#${wid} .ch", { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none", stagger: ${step} }, ${r3(t)});`);
-      } else if (anim === "word") js.push(`ctl.fromTo("#${wid}", { opacity: 0 }, { opacity: 1, duration: 0.05, ease: "none" }, ${r3(t)});`);
+      } else if (anim === "word") js.push(`ctl.fromTo("#${wid}", { opacity: 0 }, { opacity: 1, duration: ${cs.inMs ? r3(Math.min(0.4, Math.max(0.03, cs.inMs / 1000))) : 0.05}, ease: "none" }, ${r3(t)});`);
       else if (mode === "chars") js.push(`ctl.fromTo("#${wid} .ch", ${c.key ? KEY_C : SOFT_C}, ${r3(t)});`);
       else if (mode === "words") js.push(`ctl.fromTo("#${wid}", ${c.key ? KEY_W : SOFT_W}, ${r3(t)});`);
     });

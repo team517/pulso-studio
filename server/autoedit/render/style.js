@@ -76,7 +76,7 @@ export function resolveStyle(input) {
   st.caption.animation = ["soft", "pop", "typewriter", "word"].includes(cap.animation) ? cap.animation : "soft";
   st.caption.keywordStyle = ["big", "highlight", "box"].includes(cap.keywordStyle) ? cap.keywordStyle : "big";
   // v2: copiar al detalle los subtítulos de una referencia (todo opcional; lo que no venga, como siempre)
-  if (num(cap.scale) != null) st.caption.scale = clampN(num(cap.scale), 0.6, 1.6);
+  if (num(cap.scale) != null) st.caption.scale = clampN(num(cap.scale), 0.35, 1.8);
   if (num(cap.yPct) != null) st.caption.yPct = clampN(num(cap.yPct), 0.12, 0.86);
   if (num(cap.weight) != null) st.caption.weight = Math.round(clampN(num(cap.weight), 100, 900) / 100) * 100;
   if (cap.stroke && typeof cap.stroke === "object" && hex(cap.stroke.color) && num(cap.stroke.width) > 0) {
@@ -92,6 +92,7 @@ export function resolveStyle(input) {
   if (hex(cap.keywordColor)) st.caption.keywordColor = hex(cap.keywordColor);
   if (num(cap.keywordScale) != null) st.caption.keywordScale = clampN(num(cap.keywordScale), 0.6, 2);
   if (["same", "keyword"].includes(cap.keywordFont)) st.caption.keywordFont = cap.keywordFont;
+  if (num(cap.inMs) != null) st.caption.inMs = clampN(num(cap.inMs), 30, 1500); // cuánto tarda en entrar cada palabra (medido)
 
   st.look = ["glass", "solid", "light"].includes(u.cards?.look) ? u.cards.look : "glass";
   if (st.look === "light") st.colors.keywordOnLight = ensureContrast(theme.gold, "#ffffff", 3);

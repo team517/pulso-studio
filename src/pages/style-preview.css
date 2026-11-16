@@ -1,0 +1,39 @@
+/* Vista previa del estilo (ejemplo o tu vídeo) */
+.sp-modes { display: flex; align-self: stretch; }
+.sp-modes button { flex: 1; }
+.sp-pick { display: flex; align-items: center; gap: 6px; }
+.sp-pick .select { flex: 1; min-width: 0; text-overflow: ellipsis; }
+.sp-icon { width: 32px; padding: 0; justify-content: center; flex: none; }
+
+.sp-phone { isolation: isolate; }
+.sp-phone--video { background: #000; }
+.sp-media { position: absolute; inset: 0; transform-origin: 50% 30%; will-change: transform; }
+.sp-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; background: #000; }
+.sp-tint { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: soft-light; }
+.sp-vignette { position: absolute; inset: 0; pointer-events: none; }
+.sp-grain { position: absolute; inset: -30%; pointer-events: none; background-size: 160px 160px; mix-blend-mode: overlay; animation: spGrain 0.6s steps(1) infinite; }
+@keyframes spGrain {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-7%, 4%); }
+  40% { transform: translate(5%, -6%); }
+  60% { transform: translate(-3%, -2%); }
+  80% { transform: translate(6%, 5%); }
+}
+.sp-bar { position: absolute; left: 0; right: 0; height: 6%; background: #000; pointer-events: none; }
+.sp-bar--top { top: 0; }
+.sp-bar--bottom { bottom: 0; }
+
+.sp-caps { position: absolute; left: 0; right: 0; height: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 2; }
+.sp-line { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; text-align: center; transform-origin: 50% 50%; flex: none; }
+.sp-w { display: inline-block; white-space: nowrap; transform-origin: 50% 60%; }
+.sp-c { display: inline-block; }
+
+.sp-paused { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; pointer-events: none; z-index: 3; }
+.sp-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: var(--panel); color: var(--ink-2); font-size: 13px; line-height: 1.5; z-index: 4; }
+.sp-empty p { margin: 0; }
+
+.sp-note { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.sp-note p { margin: 0; }
+.sp-note p .spin { vertical-align: -2px; margin-right: 4px; }
+.sp-note .btn { align-self: flex-start; }
+.sp-err { margin: 0; font-size: 12.5px; color: var(--bad, #ff6b6b); }

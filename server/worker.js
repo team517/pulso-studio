@@ -389,26 +389,36 @@ async function doPreset({ preset, assets }) {
       if (!existsSync(f)) await download(`/api/worker/style/file/${encodeURIComponent(a.file)}`, f);
       files.push(f);
     }
-    await state({ step: "Claude está estudiando los vídeos fotograma a fotograma" });
-    const { analyzePresetFiles, downloadGoogleFont } = await import("./preset-analyze.js");
-    const r = await analyzePresetFiles(files, join(DATA, "tmp", "preset-" + preset.id));
-    const fonts = {};
-    for (const role of ["caption", "keyword"]) {
-      const want = r.fontsWanted[role];
-      if (!want) continue;
-      await state({ step: `Descargando la tipografía (${want.families[0]})` });
-      const got = await downloadGoogleFont(want.families, want.weight, join(DATA, "tmp", "fonts"));
-      if (!got) { log(`No encontré ${want.families.join(" / ")} en Google Fonts`); continue; }
+    await state({ step: "Claude está estudiando los vídeos uno a uno" });
+    const { analyzePresetFiles, fetchFontsFor } = await import("./preset-analyze.js");
+    const names = Object.fromEntries(assets.map((a) => [join(STYLE_DIR, a.file), a.name]));
+    // El avance se manda como mucho cada 1,5 s (y siempre el último)
+    let lastSent = 0, pending = null, timer = null;
+    const sendProgress = (pr) => {
+      pending = pr;
+      const go = () => { timer = null; lastSent = Date.now(); const p = pending; state({ step: p.step, progress: p }); };
+      if (Date.now() - lastSent > 1500) go();
+      else if (!timer) timer = setTimeout(go, 1500);
+    };
+    const r = await analyzePresetFiles(files, join(DATA, "tmp", "preset-" + preset.id), {
+      names,
+      onProgress: (pr) => { setBusy(`Estudiando «${preset.name}»: ${pr.pct} %`); sendProgress(pr); },
+      saveFile: async (f, name) => {
+        const fd = new FormData();
+        fd.append("name", name);
+        fd.append("file", await openAsBlob(f, { type: "image/jpeg" }), name);
+        return (await call("POST", `/api/worker/presets/${preset.id}/file`, fd)).url;
+      },
+    });
+    if (timer) clearTimeout(timer);
+    await fetchFontsFor(r, join(DATA, "tmp", "fonts"), async (got) => {
       const fd = new FormData();
       fd.append("family", got.family);
       fd.append("filename", `${got.family} ${got.weight}${got.file.slice(got.file.lastIndexOf("."))}`);
       fd.append("file", await openAsBlob(got.file), basename(got.file));
-      const up = await call("POST", `/api/worker/presets/${preset.id}/font`, fd);
-      fonts[role] = up.id;
-      if (role === "caption") r.style.caption.weight = got.weight;
-    }
-    r.style.fonts = { caption: fonts.caption || null, keyword: fonts.keyword || (r.style.caption.keywordFont === "same" ? fonts.caption || null : null), title: fonts.caption || null };
-    await state({ status: "ready", step: "Listo", name: r.name, style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw } });
+      return (await call("POST", `/api/worker/presets/${preset.id}/font`, fd)).id;
+    }, (step) => state({ step }));
+    await state({ status: "ready", step: "Listo", name: r.name, style: r.style, analysis: { summary: r.summary, fonts: r.fontsWanted, frames: r.frames, raw: r.raw, subtitles: r.subtitles, choice: r.choice, zooms: r.zooms, videos: r.videos } });
     log(`Estilo «${r.name}» listo`);
   } catch (e) {
     log("No se pudo analizar el estilo:", e.message);

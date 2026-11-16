@@ -2,7 +2,7 @@
 // Se ven sus vídeos, lo que ha sacado (letra, color, posición, zooms, look) y se usa con un clic.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Eye, Film, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { presetsApi, type StylePreset, type StyleAsset } from "../style-api";
+import { presetsApi, type PresetProgress, type PresetSub, type StylePreset, type StyleAsset } from "../style-api";
 import { Modal, useToast } from "../ui";
 
 const STATUS: Record<StylePreset["status"], string> = { queued: "En cola", analyzing: "Analizando", ready: "Listo", error: "No salió" };
@@ -22,7 +22,7 @@ export default function Presets({ refs, onApplied }: { refs: StyleAsset[]; onApp
   const busy = list?.some((p) => p.status === "queued" || p.status === "analyzing");
   useEffect(() => {
     if (!busy) return;
-    const t = setInterval(load, 5000);
+    const t = setInterval(load, 2500);
     return () => clearInterval(t);
   }, [busy, load]);
   useEffect(() => { if (open && list) setOpen(list.find((p) => p.id === open.id) ?? null); }, [list]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -31,7 +31,7 @@ export default function Presets({ refs, onApplied }: { refs: StyleAsset[]; onApp
     try { await presetsApi.use(p.id); toast(`Estilo «${p.name}» en uso: las próximas ediciones salen así`); await load(); onApplied(); } catch (e) { toast((e as Error).message, "bad"); }
   }
   async function fromRefs() {
-    try { await presetsApi.create("Estilo nuevo", [], refs.map((r) => r.id)); toast("Claude va a estudiar tus referencias fotograma a fotograma"); load(); } catch (e) { toast((e as Error).message, "bad"); }
+    try { const p = await presetsApi.create("Estilo nuevo", [], refs.map((r) => r.id)); toast("Claude va a estudiar tus referencias una a una"); await load(); setOpen(p); } catch (e) { toast((e as Error).message, "bad"); }
   }
 
   return (
@@ -50,6 +50,7 @@ export default function Presets({ refs, onApplied }: { refs: StyleAsset[]; onApp
             </button>
             <div className="pr-card__body">
               <b title={p.name}>{p.name}</b>
+              {(p.status === "queued" || p.status === "analyzing") && <Bar pct={p.analysis?.progress?.pct ?? (p.status === "queued" ? 0 : 2)} />}
               <span className={"pr-status pr-status--" + p.status}>
                 {(p.status === "queued" || p.status === "analyzing") && <Loader2 size={12} className="spin" />} {p.status === "ready" ? summaryLine(p) : p.status === "error" ? (p.error || STATUS.error) : (p.step || STATUS[p.status])}
               </span>
@@ -65,8 +66,8 @@ export default function Presets({ refs, onApplied }: { refs: StyleAsset[]; onApp
       {refs.length > 0 && (
         <button className="btn btn--sm pr-fromrefs" onClick={fromRefs}><Sparkles size={14} /> Guardar mis {refs.length} referencias como un estilo</button>
       )}
-      {creating && <NewPreset onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
-      {open && <PresetDetail p={open} onClose={() => setOpen(null)} onChanged={load} onUse={() => use(open)} />}
+      {creating && <NewPreset onClose={() => setCreating(false)} onCreated={(p) => { setCreating(false); load().then(() => setOpen(p)); }} />}
+      {open && <PresetDetail p={open} onClose={() => setOpen(null)} onChanged={load} onUse={() => use(open)} onApplied={() => { load(); onApplied(); }} />}
     </section>
   );
 }
@@ -77,7 +78,7 @@ function summaryLine(p: StylePreset) {
   return [p.fonts?.caption, s.caption.maxWords ? `${s.caption.maxWords} palabra${s.caption.maxWords > 1 ? "s" : ""}` : null, ZOOM[s.motion.zoomStyle || "smooth"], GRAPHICS[s.graphics || "few"]].filter(Boolean).join(" · ");
 }
 
-function NewPreset({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function NewPreset({ onClose, onCreated }: { onClose: () => void; onCreated: (p: StylePreset) => void }) {
   const toast = useToast();
   const [name, setName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -86,7 +87,7 @@ function NewPreset({ onClose, onCreated }: { onClose: () => void; onCreated: () 
   async function save() {
     if (!files.length) return toast("Añade al menos un vídeo.", "bad");
     setBusy(true);
-    try { await presetsApi.create(name.trim() || "Estilo nuevo", files); toast("Subido. Claude lo estudia en tu PC fotograma a fotograma."); onCreated(); }
+    try { const p = await presetsApi.create(name.trim() || "Estilo nuevo", files); toast("Subido. Claude estudia cada vídeo, uno a uno."); onCreated(p); }
     catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
   }
   return (
@@ -102,7 +103,7 @@ function NewPreset({ onClose, onCreated }: { onClose: () => void; onCreated: () 
   );
 }
 
-function PresetDetail({ p, onClose, onChanged, onUse }: { p: StylePreset; onClose: () => void; onChanged: () => void; onUse: () => void }) {
+function PresetDetail({ p, onClose, onChanged, onUse, onApplied }: { p: StylePreset; onClose: () => void; onChanged: () => void; onUse: () => void; onApplied: () => void }) {
   const toast = useToast();
   const [cur, setCur] = useState(0);
   const s = p.style, c = s?.caption;
@@ -141,7 +142,8 @@ function PresetDetail({ p, onClose, onChanged, onUse }: { p: StylePreset; onClos
         </div>
         <div className="pr-info">
           {p.status !== "ready" ? (
-            <p className={p.status === "error" ? "gate__err" : "muted"}>{p.status === "error" ? p.error : <><Loader2 size={13} className="spin" /> {p.step || STATUS[p.status]}</>}</p>
+            p.status === "error" ? <p className="gate__err">{p.error}</p>
+              : <Progress p={p.analysis?.progress} step={p.step || STATUS[p.status]} videos={p.videos.map((x) => x.name)} />
           ) : s && c ? (
             <>
               {p.analysis?.summary && <p className="pr-summary">{p.analysis.summary}</p>}
@@ -158,11 +160,107 @@ function PresetDetail({ p, onClose, onChanged, onUse }: { p: StylePreset; onClos
                 <dt>Imagen</dt><dd>{GRADE[s.grade || "neutral"]}{s.look?.grain ? " · grano" : ""}{s.look?.vignette ? " · viñeta" : ""}{s.look?.letterbox ? " · bandas de cine" : ""}</dd>
                 <dt>Gráficos</dt><dd>{GRAPHICS[s.graphics || "few"]}</dd>
               </dl>
+              {p.analysis?.zooms && p.analysis.zooms.some((z) => z.zoomStyle) && (
+                <div className="pr-zooms"><b>Zooms medidos fotograma a fotograma</b>
+                  {p.analysis.zooms.map((z) => <span key={z.video}>Vídeo {z.video + 1}: {z.zoomStyle ? `${ZOOM[z.zoomStyle]}${z.zoomStyle !== "none" ? ` · hasta ×${z.zoomMax} · ${z.perMin} por minuto` : ""}` : "no se pudo medir"}</span>)}
+                </div>
+              )}
               {s.rules && s.rules.length > 0 && <ul className="pr-rules">{s.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
             </>
           ) : null}
         </div>
       </div>
+      {p.status === "ready" && p.analysis?.subtitles && p.analysis.subtitles.length > 0 && (
+        <SubsPicker p={p} onApplied={onApplied} />
+      )}
+      {p.status === "ready" && !p.analysis?.subtitles && (
+        <div className="note" style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span>Este estilo se analizó con la versión anterior. Vuelve a analizarlo para ver los <b>subtítulos encontrados</b> (recortes reales y su animación) y elegir cuál copiar.</span>
+          <button className="btn btn--primary btn--sm" onClick={again}><RotateCcw size={14} /> Analizar otra vez</button>
+        </div>
+      )}
     </Modal>
+  );
+}
+
+function Bar({ pct }: { pct: number }) {
+  return <div className="pr-bar"><span style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} /></div>;
+}
+
+/** Avance del análisis: una barra por vídeo con lo que está haciendo. */
+function Progress({ p, step, videos }: { p?: PresetProgress; step: string; videos: string[] }) {
+  const list = p?.videos?.length ? p.videos : videos.map((name) => ({ name, pct: 0, step: "En cola" }));
+  return (
+    <div className="pr-prog">
+      <div className="pr-prog__head"><Loader2 size={14} className="spin" /> <b>{p ? `${p.pct} %` : ""}</b> {step}</div>
+      <Bar pct={p?.pct ?? 1} />
+      <ul>
+        {list.map((v, i) => (
+          <li key={i}>
+            <div className="pr-prog__row"><span title={v.name}>Vídeo {i + 1} · {v.name}</span><span className="mono">{v.pct} %</span></div>
+            <Bar pct={v.pct} />
+            <small>{v.step}</small>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const ROLE: Record<PresetSub["role"], string> = { subtitle: "Subtítulo", keyword: "Palabra clave", title: "Titular", watermark: "Marca de agua", other: "Otro texto" };
+const ANIM: Record<string, string> = { pop: "palabra a palabra con rebote", word: "palabra a palabra, de golpe", typewriter: "letra a letra", soft: "fundido suave", none: "sin animación" };
+
+/** Los subtítulos que Claude ha encontrado (recortes reales y su animación): eliges cuál copiar. */
+function SubsPicker({ p, onApplied }: { p: StylePreset; onApplied: () => void }) {
+  const toast = useToast();
+  const all = p.analysis!.subtitles!;
+  const subs = all.filter((x) => x.role !== "watermark");
+  const marks = all.filter((x) => x.role === "watermark");
+  const [sub, setSub] = useState<string | null>(p.analysis?.choice?.subtitle ?? subs[0]?.id ?? null);
+  const [kw, setKw] = useState<string | null>(p.analysis?.choice?.keyword ?? null);
+  const [busy, setBusy] = useState(false);
+  const [zoom, setZoom] = useState<string | null>(null);
+  const changed = sub !== (p.analysis?.choice?.subtitle ?? null) || kw !== (p.analysis?.choice?.keyword ?? null);
+  async function apply() {
+    if (!sub) return;
+    setBusy(true);
+    try { await presetsApi.choose(p.id, sub, kw, true); toast("Aplicado: la vista previa y las próximas ediciones usan estos subtítulos"); onApplied(); }
+    catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
+  return (
+    <div className="pr-subs">
+      <div className="pr-subs__head">
+        <div><b>Subtítulos encontrados</b><small>Recortados de tus vídeos tal cual salen. Elige cuál copiar como subtítulo y, si quieres, cuál como palabra clave.</small></div>
+        <button className="btn btn--primary" disabled={!sub || busy || (!changed && p.active)} onClick={apply}>{busy ? <Loader2 size={15} className="spin" /> : <Check size={15} />} {p.active && !changed ? "Aplicado" : "Aplicar estos subtítulos"}</button>
+      </div>
+      <div className="pr-subs__grid">
+        {subs.map((x) => (
+          <article key={x.id} className={"pr-sub" + (sub === x.id ? " is-sub" : "") + (kw === x.id ? " is-kw" : "")}>
+            <div className="pr-sub__shots">
+              {x.samples.map((m, i) => <img key={i} src={m.url} alt={m.text} title={`«${m.text}» · segundo ${m.t}`} onClick={() => setZoom(m.url)} />)}
+              {!x.samples.length && <span className="muted">Sin recorte</span>}
+            </div>
+            <div className="pr-sub__body">
+              <div className="pr-sub__title"><span className="pill">{ROLE[x.role]}</span> <small>vídeo {x.video + 1} · visto {x.count} {x.count === 1 ? "vez" : "veces"}</small></div>
+              <p>{x.label}</p>
+              <dl>
+                <dt>Letra</dt><dd>{x.font.seen || x.font.family || "?"}{x.font.got ? <small> → {x.font.got} (descargada)</small> : x.font.family ? <small> → {x.font.family}</small> : null}</dd>
+                <dt>Color</dt><dd><span className="pr-sw" style={{ background: x.spec.color }} /> {x.spec.color}{x.spec.stroke ? <> · contorno <span className="pr-sw" style={{ background: x.spec.stroke.color }} /> {x.spec.stroke.width}px</> : null}{x.spec.bg ? " · caja" : ""}{x.spec.uppercase ? " · MAYÚS." : ""}</dd>
+                <dt>Tamaño</dt><dd>{x.fontPx}px · a un {Math.round((x.spec.yPct ?? 0.7) * 100)} % de alto · {x.spec.maxWords ?? "?"} palabra(s)</dd>
+                <dt>Entrada</dt><dd>{x.animation ? `${ANIM[x.animation.type] || x.animation.type} · ${x.animation.inMs} ms` : "sin capturar"}</dd>
+              </dl>
+              {x.animation?.notes && <small className="pr-sub__notes">{x.animation.notes}</small>}
+              {x.strip && <button className="pr-sub__strip" onClick={() => setZoom(x.strip!.url)} title="Fotograma a fotograma: cómo entra"><img src={x.strip.url} alt="Animación fotograma a fotograma" /><span>Ver la animación fotograma a fotograma</span></button>}
+              <div className="row pr-sub__pick">
+                <label><input type="radio" name={"sub-" + p.id} checked={sub === x.id} onChange={() => { setSub(x.id); if (kw === x.id) setKw(null); }} /> Subtítulo</label>
+                <label><input type="checkbox" checked={kw === x.id} disabled={sub === x.id} onChange={(e) => setKw(e.target.checked ? x.id : null)} /> Palabra clave</label>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+      {marks.length > 0 && <p className="muted" style={{ fontSize: 12.5, margin: "8px 0 0" }}>También vi (no se copia): {marks.map((m) => m.samples[0]?.text || m.label).join(" · ")}</p>}
+      {zoom && <div className="pr-zoom" onClick={() => setZoom(null)}><img src={zoom} alt="" /></div>}
+    </div>
   );
 }
