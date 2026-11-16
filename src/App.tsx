@@ -11,6 +11,7 @@ import AutoEdit from "./pages/AutoEdit";
 import Results from "./pages/Results";
 import Edited from "./pages/Edited";
 import StylePage from "./pages/Style";
+import ConnectPC, { approvePC, type PairRequest } from "./pages/ConnectPC";
 import Editor from "./editor/Editor";
 
 const NAV = [
@@ -29,7 +30,9 @@ export default function App() {
   const [path] = usePath();
   const [online, setOnline] = useState(true);
   const [storageOk, setStorageOk] = useState(true);
-  const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null } | null>(null);
+  const [pc, setPc] = useState<{ online: boolean; claude: boolean; busy: string | null; name?: string | null } | null>(null);
+  const [pending, setPending] = useState<PairRequest[]>([]);
+  const [approving, setApproving] = useState(false);
   const pathname = path.split("?")[0];
 
   // ¿Está el servidor local encendido?
@@ -37,10 +40,13 @@ export default function App() {
     const check = () => {
       fetch("/api/platforms").then((r) => setOnline(r.ok)).catch(() => setOnline(false));
       // En el panel: ¿está tu PC encendido para editar?
-      if (IN_PANEL) fetch("/api/autoedit/info").then((r) => r.json()).then((i) => { setPc(i.worker ?? null); setStorageOk(i.storage !== false); }).catch(() => {});
+      if (IN_PANEL) {
+        fetch("/api/autoedit/info").then((r) => r.json()).then((i) => { setPc(i.worker ?? { online: false, claude: false, busy: null }); setStorageOk(i.storage !== false); }).catch(() => {});
+        fetch("/api/pc/pending").then((r) => (r.ok ? r.json() : [])).then(setPending).catch(() => {});
+      }
     };
     check();
-    const t = setInterval(check, 15000);
+    const t = setInterval(check, 10000);
     return () => clearInterval(t);
   }, []);
 
@@ -56,6 +62,7 @@ export default function App() {
   else if (pathname === "/resultados") page = <Results />;
   else if (pathname === "/editados") page = <Edited />;
   else if (pathname === "/estilo") page = <StylePage />;
+  else if (pathname === "/conectar-pc") page = <ConnectPC />;
 
   let lastGroup = "";
   return (
@@ -86,8 +93,8 @@ export default function App() {
           {IN_PANEL ? (
             <>
               <button className="btn btn--ghost btn--sm side__out" onClick={logout}>Salir</button>
-              <span className={"dot" + (pc?.online ? "" : " is-off")} />
-              {!online ? "Sin conexión con el servidor" : pc?.online ? (pc.busy ? `Tu PC: ${pc.busy}` : "Tu PC está listo para editar") : "Tu PC está apagado: los vídeos esperan en cola"}
+              <span className={"dot" + (pc === null ? " is-wait" : pc.online ? "" : " is-off")} />
+              {!online ? "Sin conexión con el servidor" : pc === null ? "Comprobando tu PC…" : pc.online ? (pc.busy ? `Tu PC: ${pc.busy}` : `${pc.name || "Tu PC"} está listo para editar`) : "Tu PC está apagado: los vídeos esperan en cola"}
             </>
           ) : (
             <>
@@ -98,7 +105,17 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
-        {!storageOk && <div className="note note--bad" style={{ margin: "16px 24px 0" }}><b>Falta el volumen en EasyPanel.</b> En el servicio, Montajes → añade un volumen con la ruta <code>/app/data</code> e implementa. Sin él, cada vez que implementas se borran los vídeos, la contraseña y las conexiones.</div>}
+        {!storageOk && <div className="note note--bad" style={{ margin: "16px 24px 0" }}><b>Falta el volumen en EasyPanel: al implementar se borra lo que hay en el servidor.</b> En EasyPanel → servicio <b>chipsfinder</b> → <b>Mounts</b> → <b>Add Volume Mount</b>: nombre <code>pulso-data</code>, ruta <code>/app/data</code> → Guardar → Implementar. Mientras tanto no pierdes nada: tu PC guarda una copia de todo y la devuelve sola.</div>}
+        {IN_PANEL && pending.length > 0 && pathname !== "/conectar-pc" && (
+          <div className="note note--warn pc-ask" style={{ margin: "16px 24px 0" }}>
+            <span><b>{pending[0].name}</b> quiere conectarse para editar (código <span className="mono">{pending[0].code}</span>).</span>
+            <button className="btn btn--primary btn--sm" disabled={approving} onClick={async () => {
+              setApproving(true);
+              try { await approvePC(pending[0].code); setPending((p) => p.slice(1)); } catch { /* caducado */ }
+              setApproving(false);
+            }}>Conectar este PC</button>
+          </div>
+        )}
         {page}
       </main>
     </div>

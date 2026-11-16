@@ -2,14 +2,8 @@
 import { createJob, jobView, listJobs, editedLibrary, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick } from "./pipeline.js";
 import { aiProvider, resetClaudeCheck } from "./brain.js";
 import { IS_SERVER } from "../config.js";
-import { readFileSync } from "node:fs";
-import { DATA } from "../db.js";
-
-/** En EasyPanel: ¿está data/ en un volumen? (si no, se borra todo al implementar) */
-function dataPersistent() {
-  if (!IS_SERVER || process.platform !== "linux") return true;
-  try { return readFileSync("/proc/self/mountinfo", "utf8").split("\n").some((l) => l.split(" ")[4] === DATA); } catch { return null; }
-}
+import { PERSISTENT } from "../db.js";
+const dataPersistent = () => (IS_SERVER ? PERSISTENT : true);
 import { workerStatus } from "../worker-api.js";
 
 export function registerAutoeditRoutes(app, wrap) {

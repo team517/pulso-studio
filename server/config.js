@@ -5,6 +5,7 @@
 import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DATA } from "./data-dir.js";
 
 export const MODE = ["server", "worker"].includes(process.env.STUDIO_MODE) ? process.env.STUDIO_MODE : "local";
 export const IS_SERVER = MODE === "server";
@@ -20,7 +21,7 @@ export const WORKER_TOKEN = process.env.STUDIO_WORKER_TOKEN || "";
 function loadSecret() {
   if (process.env.STUDIO_SECRET) return process.env.STUDIO_SECRET;
   if (!IS_SERVER) return "";
-  const dir = process.env.STUDIO_DATA || join(process.cwd(), "data");
+  const dir = DATA;
   const f = join(dir, "secret.key");
   try {
     if (existsSync(f)) return readFileSync(f, "utf8").trim();
@@ -32,9 +33,6 @@ function loadSecret() {
 }
 export const SECRET = loadSecret();
 
-if (IS_SERVER) {
-  if (!WORKER_TOKEN) console.warn("[config] Falta STUDIO_WORKER_TOKEN: tu PC no podrá recoger vídeos para editar.");
-}
 
 export const sign = (text) => createHmac("sha256", SECRET).update(text).digest("base64url");
 export function safeEqual(a, b) {

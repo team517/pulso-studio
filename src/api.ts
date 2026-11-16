@@ -6,8 +6,9 @@ export type Word = { w: string; s: number; e: number };
 export type Media = {
   id: string; name: string; kind: MediaKind; file: string; url: string; thumbUrl: string | null;
   duration: number; width: number | null; height: number | null; has_audio: boolean; size: number;
-  transcript: Word[] | null; transcript_status: string | null; created_at: string;
+  transcript: Word[] | null; transcript_status: string | null; created_at: string; folder_id?: string | null;
 };
+export type Folder = { id: string; name: string; count: number };
 
 export type Format = "9:16" | "1:1" | "4:5" | "16:9";
 export const FORMATS: { id: Format; w: number; h: number; label: string; hint: string }[] = [
@@ -75,11 +76,19 @@ export const api = {
   media: () => req<Media[]>("GET", "/api/media"),
   mediaOne: (id: string) => req<Media>("GET", `/api/media/${id}`),
   /** auto: true → si está activado en «Estilo de edición», cada vídeo empieza a auto-editarse al subirlo */
-  upload: (files: File[], opts: { auto?: boolean } = {}) => {
+  upload: (files: File[], opts: { auto?: boolean; folder?: string | null } = {}) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    return req<(Media & { autoeditJob?: string })[]>("POST", "/api/media" + (opts.auto ? "?auto=1" : ""), fd);
+    const q = new URLSearchParams();
+    if (opts.auto) q.set("auto", "1");
+    if (opts.folder) q.set("folder", opts.folder);
+    return req<(Media & { autoeditJob?: string })[]>("POST", "/api/media" + (q.size ? `?${q}` : ""), fd);
   },
+  moveMedia: (id: string, folder_id: string | null) => req<Media>("PATCH", `/api/media/${id}`, { folder_id }),
+  folders: () => req<Folder[]>("GET", "/api/folders"),
+  createFolder: (name: string) => req<Folder>("POST", "/api/folders", { name }),
+  renameFolder: (id: string, name: string) => req("PUT", `/api/folders/${id}`, { name }),
+  deleteFolder: (id: string) => req("DELETE", `/api/folders/${id}`),
   deleteMedia: (id: string) => req("DELETE", `/api/media/${id}`),
   transcribe: (id: string, language = "es") => req("POST", `/api/media/${id}/transcribe`, { language }),
 

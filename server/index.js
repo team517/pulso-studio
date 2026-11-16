@@ -23,7 +23,7 @@ const root = express();
 root.set("trust proxy", true);
 const app = express.Router();
 root.use(BASE || "/", app);
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "300mb" }));
 registerAuth(app);
 
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
@@ -51,6 +51,31 @@ const mediaOut = (m) => {
   return { ...r, has_audio: !!r.has_audio, url: `/files/media/${r.file}`, thumbUrl: r.thumb ? `/files/thumbs/${r.thumb}` : null, transcript: r.transcript ?? null };
 };
 
+/* ---------- Carpetas ---------- */
+
+app.get("/api/folders", wrap((req, res) => {
+  res.json(db.prepare(`SELECT f.*, (SELECT COUNT(*) FROM media m WHERE m.folder_id = f.id) AS count FROM folders f ORDER BY f.name COLLATE NOCASE`).all());
+}));
+app.post("/api/folders", wrap((req, res) => {
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+  if (!name) throw Object.assign(new Error("Ponle un nombre a la carpeta."), { status: 400 });
+  const id = uid();
+  db.prepare("INSERT INTO folders (id, name, created_at) VALUES (?, ?, ?)").run(id, name, now());
+  res.json({ id, name, count: 0 });
+}));
+app.put("/api/folders/:id", wrap((req, res) => {
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+  if (!name) throw Object.assign(new Error("Ponle un nombre a la carpeta."), { status: 400 });
+  db.prepare("UPDATE folders SET name = ? WHERE id = ?").run(name, req.params.id);
+  res.json({ ok: true });
+}));
+// Borrar una carpeta no borra los vídeos: vuelven a «Sin carpeta»
+app.delete("/api/folders/:id", wrap((req, res) => {
+  db.prepare("UPDATE media SET folder_id = NULL WHERE folder_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM folders WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+}));
+
 app.get("/api/media", wrap((req, res) => {
   res.json(db.prepare("SELECT * FROM media ORDER BY created_at DESC").all().map(mediaOut));
 }));
@@ -66,9 +91,10 @@ app.post("/api/media", upload.array("files", 50), wrap(async (req, res) => {
     const kind = isImage ? "image" : info.hasVideo ? "video" : info.hasAudio ? "audio" : null;
     if (!kind) { rmSync(path, { force: true }); continue; }
     const thumb = kind === "audio" ? null : await makeThumb(path, `${id}.jpg`, kind === "video" ? Math.min(1, info.duration / 3) : 0).catch(() => null);
-    db.prepare(`INSERT INTO media (id, name, kind, file, duration, width, height, has_audio, size, thumb, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, Buffer.from(f.originalname, "latin1").toString("utf8"), kind, f.filename,
-      kind === "image" ? 5 : info.duration, info.width, info.height, info.hasAudio ? 1 : 0, f.size, thumb, now());
+    const folder = req.query.folder && db.prepare("SELECT id FROM folders WHERE id = ?").get(String(req.query.folder)) ? String(req.query.folder) : null;
+    db.prepare(`INSERT INTO media (id, name, kind, file, duration, width, height, has_audio, size, thumb, created_at, folder_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, Buffer.from(f.originalname, "latin1").toString("utf8"), kind, f.filename,
+      kind === "image" ? 5 : info.duration, info.width, info.height, info.hasAudio ? 1 : 0, f.size, thumb, now(), folder);
     const saved = mediaOut(db.prepare("SELECT * FROM media WHERE id = ?").get(id));
     // Subido desde la Biblioteca o Auto-edición (?auto=1): empieza la auto-edición sola
     if (req.query.auto === "1" && kind === "video" && info.hasAudio && info.duration >= 5) {
@@ -92,6 +118,10 @@ app.get("/api/media/:id", wrap((req, res) => {
 
 app.patch("/api/media/:id", wrap((req, res) => {
   if (req.body.name) db.prepare("UPDATE media SET name = ? WHERE id = ?").run(String(req.body.name).slice(0, 200), req.params.id);
+  if ("folder_id" in req.body) {
+    const f = req.body.folder_id && db.prepare("SELECT id FROM folders WHERE id = ?").get(String(req.body.folder_id));
+    db.prepare("UPDATE media SET folder_id = ? WHERE id = ?").run(f ? f.id : null, req.params.id);
+  }
   res.json(mediaOut(db.prepare("SELECT * FROM media WHERE id = ?").get(req.params.id)));
 }));
 

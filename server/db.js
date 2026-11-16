@@ -1,10 +1,11 @@
 // Base de datos local (SQLite integrado en Node 24). Todo vive en data/.
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { DATA, PERSISTENT } from "./data-dir.js";
 
-export const DATA = process.env.STUDIO_DATA || join(process.cwd(), "data");
+export { DATA, PERSISTENT };
 export const DIRS = {
   media: join(DATA, "media"),
   thumbs: join(DATA, "thumbs"),
@@ -13,6 +14,7 @@ export const DIRS = {
 };
 for (const d of [DATA, ...Object.values(DIRS)]) mkdirSync(d, { recursive: true });
 
+const NEW_DB = !existsSync(join(DATA, "studio.db"));
 export const db = new DatabaseSync(join(DATA, "studio.db"));
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -73,3 +75,10 @@ db.exec(`
     error TEXT, last_try_at TEXT, last_ok_at TEXT, PRIMARY KEY (post_id, platform)
   );
 `);
+
+// Carpetas de la Biblioteca
+db.exec(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL)`);
+if (!db.prepare("PRAGMA table_info(media)").all().some((c) => c.name === "folder_id")) db.exec("ALTER TABLE media ADD COLUMN folder_id TEXT");
+
+// Identidad de esta base de datos: si cambia, es que el servidor empezó de cero (y tu PC puede devolverle la copia)
+if (!getSetting("server:id")) setSetting("server:id", { id: randomUUID(), at: now(), fresh: NEW_DB });

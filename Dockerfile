@@ -17,6 +17,6 @@ RUN VITE_BASE=/ VITE_STUDIO_AUTH=1 npx vite build
 # STUDIO_WORKER_TOKEN (la clave de tu PC) se pone en EasyPanel → Entorno.
 ENV NODE_ENV=production     STUDIO_MODE=server     STUDIO_PORT=80     SUPABASE_URL=https://vwybcwidffcnpcjlehxv.supabase.co     SUPABASE_KEY=sb_publishable_ak3EfOjkSE25l5YBz-EU7g_mMbY_vif     PUBLIC_URL=https://backend-onepulso-chipsfinder.25kofp.easypanel.host
 # Base de datos, vídeos y miniaturas: monta aquí un volumen en EasyPanel para no perderlos
-VOLUME /app/data
+# (Sin VOLUME aquí: el volumen lo pones en EasyPanel → Montajes → /app/data. Uno anónimo se borraba al implementar.)
 EXPOSE 80
 CMD ["node", "--no-warnings=ExperimentalWarning", "server/index.js"]

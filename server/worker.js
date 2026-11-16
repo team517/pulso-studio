@@ -5,7 +5,8 @@
 //   (o las variables STUDIO_SERVER y STUDIO_WORKER_TOKEN)
 process.env.STUDIO_MODE = "worker";
 
-const { readFileSync, existsSync, mkdirSync, statSync, createWriteStream, openAsBlob, rmSync } = await import("node:fs");
+const { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, createWriteStream, openAsBlob, rmSync, readdirSync, renameSync, linkSync, copyFileSync } = await import("node:fs");
+const childProcess = await import("node:child_process");
 const { join, basename } = await import("node:path");
 const { Readable } = await import("node:stream");
 const { pipeline: pump } = await import("node:stream/promises");
@@ -21,54 +22,85 @@ let cfg = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : {};
 const SERVER = String(process.env.STUDIO_SERVER || cfg.server || DEFAULT_SERVER).replace(/\/+$/, "");
 let TOKEN = process.env.STUDIO_WORKER_TOKEN || cfg.token || "";
 
-/** Pregunta por la consola (la contraseña no se ve al escribirla). */
-async function ask(question, hidden = false) {
-  const { createInterface } = await import("node:readline");
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  if (hidden) rl._writeToOutput = (s) => { if (s.includes(question)) process.stdout.write(s); else if (s === "\r\n" || s === "\n") process.stdout.write(s); };
-  const answer = await new Promise((r) => rl.question(question, r));
-  rl.close();
-  if (hidden) process.stdout.write("\n");
-  return answer.trim();
+const { hostname } = await import("node:os");
+const PC_NAME = (process.env.COMPUTERNAME || hostname() || "Tu PC").slice(0, 60);
+const log = (...a) => console.log(new Date().toLocaleTimeString("es-ES"), ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function saveCfg() {
+  cfg = { server: SERVER, token: TOKEN };
+  mkdirSync(DATA, { recursive: true });
+  writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + "\n");
 }
 
-/** Primera vez (o clave que ya no vale): entras con tu cuenta de admin y el PC se conecta solo. */
-async function pair() {
-  console.log(`\nConectar este PC con Pulso Studio (${SERVER})`);
-  console.log("Entra con tu cuenta de Pulso Studio (la misma que en la web).\n");
-  for (;;) {
-    const email = (await ask("Correo [team@onepulso.online]: ")) || "team@onepulso.online";
-    const password = await ask("Contraseña: ", true);
-    const r = await fetch(`${SERVER}/api/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
-    const data = await r.json().catch(() => null);
-    if (data?.code === "needs_setup") { console.log("✗ Todavía no has creado la contraseña: créala en la web y vuelve a intentarlo.\n"); continue; }
-    if (!r.ok) { console.log(`✗ ${data?.error || "No se pudo entrar"}\n`); continue; }
-    const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
-    const p = await fetch(`${SERVER}/api/pc/pair`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ renew: true }) });
-    const pd = await p.json().catch(() => null);
-    if (!p.ok || !pd?.token) { console.log(`✗ ${pd?.error || "No se pudo conectar el PC"}\n`); continue; }
-    TOKEN = pd.token;
-    cfg = { server: SERVER, token: TOKEN };
-    mkdirSync(DATA, { recursive: true });
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + "\n");
-    console.log("✓ PC conectado. No hará falta volver a hacerlo.\n");
-    return;
-  }
+/** Abre la web en el navegador de este PC. */
+function openBrowser(url) {
+  if (process.env.STUDIO_NO_BROWSER) return;
+  const { spawn } = childProcess;
+  try {
+    if (process.platform === "win32") spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    else spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+  } catch { /* se ve el enlace en la ventana */ }
 }
 
-// ¿Vale la clave que tenemos? Si no, se conecta con tu cuenta
+/** Conectar el PC: pide un código al panel, abre la web y espera a que pulses «Conectar». */
+let pairing = null;
+function pair() {
+  if (pairing) return pairing;
+  pairing = (async () => {
+    for (;;) {
+      let start;
+      try {
+        const r = await fetch(`${SERVER}/api/worker/pair/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: PC_NAME }), signal: AbortSignal.timeout(20e3) });
+        start = await r.json();
+        if (!r.ok) throw new Error(start?.error || r.status);
+      } catch (e) { log("No llego al panel para conectar el PC:", e.message, "· reintento en 30 s"); await sleep(30e3); continue; }
+      console.log(`\n  Conectar este PC (${PC_NAME}) con Pulso Studio`);
+      console.log(`  Se ha abierto la web: pulsa «Conectar este PC». Código: ${start.code}`);
+      console.log(`  Si no se abre, entra en: ${start.url}\n`);
+      openBrowser(start.url);
+      const until = Date.now() + 18 * 60e3;
+      while (Date.now() < until) {
+        await sleep(3000);
+        try {
+          const r = await fetch(`${SERVER}/api/worker/pair/${start.code}`, { signal: AbortSignal.timeout(15e3) });
+          if (r.status === 404) break; // caducado: se pide otro
+          const d = await r.json();
+          if (d.status === "approved" && d.token) {
+            TOKEN = d.token;
+            saveCfg();
+            beat?.postMessage({ token: TOKEN, now: true });
+            log("✓ PC conectado. No hará falta volver a hacerlo.");
+            return;
+          }
+        } catch { /* sin red: se sigue esperando */ }
+      }
+      log("El código caducó: pido otro.");
+    }
+  })().finally(() => { pairing = null; });
+  return pairing;
+}
+
+class Unauthorized extends Error {}
+
+// ¿Vale la clave que tenemos? Si no, se conecta con un clic en la web
 async function tokenWorks() {
   if (!TOKEN) return false;
   try {
-    const r = await fetch(`${SERVER}/api/worker/hello`, { method: "POST", headers: { "x-worker-token": TOKEN, "content-type": "application/json" }, body: "{}" });
+    const r = await fetch(`${SERVER}/api/worker/hello`, { method: "POST", headers: { "x-worker-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify({ name: PC_NAME }) });
     return r.status !== 401;
   } catch { return true; } // sin red: se reintenta luego
 }
+
+// Aviso de vida en un hilo aparte (sigue aunque el PC esté renderizando)
+const { Worker: Thread } = await import("node:worker_threads");
+const beat = new Thread(new URL("./heartbeat.js", import.meta.url), { workerData: { server: SERVER, token: TOKEN, name: PC_NAME } });
+beat.unref();
+beat.on("message", (m) => { if (m.status === 401 && !pairing) log("El panel ya no reconoce este PC: hay que conectarlo otra vez."); });
+beat.on("error", (e) => log("Aviso de vida:", e.message));
+
 if (!(await tokenWorks())) await pair();
 
-const log = (...a) => console.log(new Date().toLocaleTimeString("es-ES"), ...a);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function call(method, path, body, { raw = false, timeout = 60e3 } = {}) {
   const isForm = body instanceof FormData;
@@ -78,6 +110,7 @@ async function call(method, path, body, { raw = false, timeout = 60e3 } = {}) {
     body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
     signal: AbortSignal.timeout(timeout),
   });
+  if (r.status === 401 && path.startsWith("/api/worker/")) throw new Unauthorized("El panel ya no reconoce este PC");
   if (raw) { if (!r.ok) throw new Error(`${path}: ${r.status}`); return r; }
   const text = await r.text();
   const data = text ? JSON.parse(text) : null;
@@ -89,7 +122,6 @@ async function download(path, to) {
   const r = await call("GET", path, null, { raw: true, timeout: 60 * 60e3 });
   const tmp = to + ".part";
   await pump(Readable.fromWeb(r.body), createWriteStream(tmp));
-  const { renameSync } = await import("node:fs");
   renameSync(tmp, to);
 }
 
@@ -99,9 +131,11 @@ let busy = null;
 async function hello() {
   try {
     const claude = (await aiProvider()) === "claude";
-    await call("POST", "/api/worker/hello", { claude, busy, version: 1 });
-  } catch (e) { log("Sin conexión con el panel:", e.message); }
+    beat.postMessage({ busy, claude });
+    await call("POST", "/api/worker/hello", { claude, busy, name: PC_NAME, version: 2 });
+  } catch (e) { if (!(e instanceof Unauthorized)) log("Sin conexión con el panel:", e.message); }
 }
+const setBusy = (b) => { busy = b; beat.postMessage({ busy: b }); };
 
 /* ---------- Copias locales de lo que hay en el servidor ---------- */
 
@@ -206,7 +240,7 @@ async function pushState(jobId) {
 
 async function doJob({ job, items, media }) {
   if (!media) throw new Error("El vídeo original ya no está en el panel.");
-  busy = `Editando «${job.name}»`;
+  setBusy(`Editando «${job.name}»`);
   log(busy);
   await ensureMedia(media);
   await syncStyle();
@@ -245,7 +279,7 @@ async function doJob({ job, items, media }) {
 }
 
 async function doTranscribe({ media }) {
-  busy = `Transcribiendo «${media.name}»`;
+  setBusy(`Transcribiendo «${media.name}»`);
   log(busy);
   await ensureMedia(media);
   await transcribeNow(media.id);
@@ -254,7 +288,7 @@ async function doTranscribe({ media }) {
 }
 
 async function doAnalyze() {
-  busy = "Claude está mirando tus referencias";
+  setBusy("Claude está mirando tus referencias");
   log(busy);
   await syncStyle();
   const r = await lookAtReferences();
@@ -263,7 +297,7 @@ async function doAnalyze() {
 }
 
 async function doPreset({ preset, assets }) {
-  busy = `Claude está estudiando el estilo «${preset.name}»`;
+  setBusy(`Claude está estudiando el estilo «${preset.name}»`);
   log(busy);
   const state = (b) => call("POST", `/api/worker/presets/${preset.id}/state`, b).catch((e) => log("Sin conexión con el panel:", e.message));
   try {
@@ -302,16 +336,119 @@ async function doPreset({ preset, assets }) {
   }
 }
 
+/* ---------- Copia de todo en tu PC (y se devuelve sola si el panel empieza de cero) ---------- */
+
+const BK = join(DATA, "copia-servidor");
+const BK_META = join(BK, "copia.json");
+const LOCAL_DIRS = { media: DIRS.media, thumbs: DIRS.thumbs, exports: DIRS.exports, style: STYLE_DIR };
+const readBackup = () => { try { return JSON.parse(readFileSync(BK_META, "utf8")); } catch { return null; } };
+const writeBackup = (b) => { mkdirSync(BK, { recursive: true }); writeFileSync(BK_META + ".tmp", JSON.stringify(b)); renameSync(BK_META + ".tmp", BK_META); };
+const sizeOf = (f) => { try { return statSync(f).size; } catch { return -1; } };
+
+/** Pone un archivo en la copia: si este PC ya lo tiene (lo editó o lo descargó), sin volver a bajarlo. */
+async function keepFile(dir, name, size) {
+  const to = join(BK, dir, name);
+  if (sizeOf(to) === size) return false;
+  mkdirSync(join(BK, dir), { recursive: true });
+  const here = join(LOCAL_DIRS[dir], name);
+  if (sizeOf(here) === size) {
+    rmSync(to, { force: true });
+    try { linkSync(here, to); } catch { copyFileSync(here, to); }
+    return true;
+  }
+  await download(`/api/worker/backup/file/${dir}/${encodeURIComponent(name)}`, to);
+  return true;
+}
+
+/** La primera vez: lo que ya hay en este PC (tu vídeo, tus referencias y tus estilos) entra en la copia. */
+function seedFromThisPC() {
+  if (existsSync(BK_META)) return;
+  const pick = (t, where = "") => { try { return db.prepare(`SELECT * FROM ${t} ${where}`).all(); } catch { return []; } };
+  const tables = {
+    folders: pick("folders"),
+    media: pick("media").map((m) => ({ ...m, transcript_status: m.transcript_status === "running" ? null : m.transcript_status })),
+    style_assets: pick("style_assets"),
+    style_presets: pick("style_presets", "WHERE status = 'ready'"),
+    settings: pick("settings", "WHERE key IN ('style:default', 'autoedit:auto')"),
+  };
+  const files = [];
+  for (const m of tables.media) files.push(["media", m.file], ...(m.thumb ? [["thumbs", m.thumb]] : []));
+  for (const a of tables.style_assets) files.push(["style", a.file]);
+  let n = 0;
+  for (const [dir, name] of files) {
+    const here = join(LOCAL_DIRS[dir], name);
+    if (!existsSync(here)) continue;
+    mkdirSync(join(BK, dir), { recursive: true });
+    try { linkSync(here, join(BK, dir, name)); } catch { try { copyFileSync(here, join(BK, dir, name)); } catch { continue; } }
+    n++;
+  }
+  writeBackup({ server: { id: "este-pc" }, at: now(), tables });
+  log(`Copia inicial con lo que ya había en este PC (${n} archivos)`);
+}
+
+/** Devuelve la copia al panel: filas que falten y archivos que no tenga. */
+async function restoreTo(b, have) {
+  log("El panel ha empezado de cero: le devuelvo tu copia (vídeos, referencias, estilos, ajustes)…");
+  const r = await call("POST", "/api/worker/restore", { tables: have.tables }, { timeout: 10 * 60e3 });
+  const there = new Set(b.files.map((f) => `${f.dir}/${f.name}`));
+  let n = 0;
+  for (const dir of ["style", "thumbs", "media", "exports"]) {
+    const path = join(BK, dir);
+    if (!existsSync(path)) continue;
+    for (const name of readdirSync(path)) {
+      if (there.has(`${dir}/${name}`) || name.endsWith(".part")) continue;
+      const fd = new FormData();
+      fd.append("dir", dir);
+      fd.append("name", name);
+      fd.append("file", await openAsBlob(join(path, name)), name);
+      await call("POST", "/api/worker/restore/file", fd, { timeout: 2 * 60 * 60e3 });
+      n++;
+    }
+  }
+  log(`✓ Copia devuelta: ${r.rows} datos y ${n} archivos`);
+}
+
+let backingUp = null;
+function backupCycle() {
+  if (backingUp) return backingUp;
+  backingUp = (async () => {
+    const b = await call("GET", "/api/worker/backup", null, { timeout: 5 * 60e3 });
+    const have = readBackup();
+    // Base de datos nueva en el panel (se borró al implementar): se le devuelve todo lo que tenías
+    if (have && b.server?.id && have.server?.id !== b.server.id) {
+      await restoreTo(b, have);
+      const again = await call("GET", "/api/worker/backup", null, { timeout: 5 * 60e3 });
+      Object.assign(b, again);
+    }
+    if (b.empty) return; // nada que copiar (y la copia anterior no se toca)
+    let n = 0;
+    for (const f of b.files) { try { if (await keepFile(f.dir, f.name, f.size)) n++; } catch (e) { log(`No se pudo copiar ${f.name}:`, e.message); } }
+    // Lo que borraste en el panel sale también de la copia
+    const there = new Set(b.files.map((f) => `${f.dir}/${f.name}`));
+    for (const dir of Object.keys(LOCAL_DIRS)) {
+      const path = join(BK, dir);
+      if (existsSync(path)) for (const name of readdirSync(path)) if (!there.has(`${dir}/${name}`)) rmSync(join(path, name), { force: true });
+    }
+    writeBackup({ server: b.server, at: now(), tables: b.tables });
+    if (n) log(`Copia de seguridad al día en este PC (${n} archivos nuevos)`);
+  })().catch((e) => { if (e instanceof Unauthorized) throw e; log("No se pudo hacer la copia:", e.message); }).finally(() => { backingUp = null; });
+  return backingUp;
+}
+
 /* ---------- Bucle ---------- */
 
-log(`Pulso Studio · tu PC edita para ${SERVER}`);
+log(`Pulso Studio · ${PC_NAME} edita para ${SERVER}`);
+seedFromThisPC();
 await hello();
-setInterval(hello, 30e3);
+setInterval(hello, 60e3);
+let lastBackup = 0;
 for (;;) {
   let task = null;
   try {
+    if (Date.now() - lastBackup > 3 * 60e3) { lastBackup = Date.now(); await backupCycle(); }
     task = await call("GET", "/api/worker/next");
   } catch (e) {
+    if (e instanceof Unauthorized) { log("El panel ya no reconoce este PC: lo conecto otra vez."); await pair(); lastBackup = 0; continue; }
     log("Sin conexión con el panel:", e.message);
     await sleep(20e3);
     continue;
@@ -323,11 +460,13 @@ for (;;) {
     else if (task.type === "analyze") await doAnalyze();
     else if (task.type === "preset") await doPreset(task);
   } catch (e) {
+    if (e instanceof Unauthorized) { await pair(); continue; }
     log("Fallo:", e.message);
     if (task.type === "job") await call("POST", `/api/worker/jobs/${task.job.id}/state`, { job: { status: "error", error: String(e.message).slice(0, 800) }, items: [] }).catch(() => {});
     if (task.type === "transcribe") await call("POST", `/api/worker/media/${task.media.id}/transcript`, { status: "error: " + e.message.slice(0, 300) }).catch(() => {});
   } finally {
-    busy = null;
+    setBusy(null);
     hello();
+    lastBackup = 0; // copia en cuanto termina cada encargo
   }
 }

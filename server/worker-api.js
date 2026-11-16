@@ -2,9 +2,9 @@
 // Todas estas rutas piden la cabecera x-worker-token (STUDIO_WORKER_TOKEN).
 import multer from "multer";
 import { join, basename } from "node:path";
-import { existsSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, renameSync, rmSync, statSync, readdirSync } from "node:fs";
 import { db, DIRS, now, row, getSetting, setSetting } from "./db.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { IS_SERVER, BASE } from "./config.js";
 import { isWorker } from "./auth.js";
 import { setJob, setItem } from "./autoedit/pipeline.js";
@@ -16,26 +16,80 @@ const STALE_MIN = 15; // si el PC no da señales en 15 min, el trabajo vuelve a 
 /** Estado del PC para la interfaz. */
 export function workerStatus() {
   const w = getSetting("worker:status", null);
-  const online = !!w && Date.now() - w.at < 90e3;
-  return { online, claude: online && !!w.claude, lastSeen: w?.at ?? null, busy: online ? w.busy || null : null };
+  const online = !!w && Date.now() - w.at < 120e3;
+  return { online, claude: online && !!w.claude, lastSeen: w?.at ?? null, busy: online ? w.busy || null : null, name: w?.name || null };
 }
+
+// Copia de seguridad en tu PC: tablas y carpetas que se copian (y se devuelven si el servidor empieza de cero)
+const BACKUP_TABLES = ["folders", "media", "projects", "exports", "posts", "post_insights", "post_insights_state", "style_assets", "style_presets", "autoedit_jobs", "autoedit_items", "settings"];
+const CONTENT_TABLES = ["media", "projects", "exports", "posts", "style_assets", "style_presets", "autoedit_jobs"];
+const SKIP_SETTING = /^(auth:|worker:|server:id$)/;
+const fileDirs = () => ({ media: DIRS.media, thumbs: DIRS.thumbs, exports: DIRS.exports, style: STYLE_DIR });
+const hasTable = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
 
 export function registerWorkerRoutes(app, wrap) {
   if (!IS_SERVER) return;
   const guard = (req, res, next) => (isWorker(req) ? next() : res.status(401).json({ error: "Token del PC incorrecto." }));
   const up = multer({ dest: DIRS.tmp, limits: { fileSize: 8 * 1024 ** 3 } });
 
-  // «Conectar mi PC» (con la sesión de admin): da el archivo de configuración para el editor del PC
-  app.post("/api/pc/pair", wrap((req, res) => {
+  const publicBase = (req) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}${BASE}`).replace(/\/+$/, "");
+  const workerToken = () => {
     let token = getSetting("worker:token", "");
-    if (!token || req.body?.renew) { token = randomBytes(32).toString("base64url"); setSetting("worker:token", token); }
-    const server = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}${BASE}`).replace(/\/+$/, "");
-    res.json({ server, token });
+    if (!token) { token = randomBytes(32).toString("base64url"); setSetting("worker:token", token); }
+    return token;
+  };
+
+  // «Conectar mi PC» (con tu sesión): el archivo de configuración para el editor del PC (no cambia la clave)
+  app.post("/api/pc/pair", wrap((req, res) => {
+    if (req.body?.renew) setSetting("worker:token", "");
+    res.json({ server: publicBase(req), token: workerToken() });
+  }));
+
+  // Conectar el PC con un clic: el editor pide un código, abre esta web y tú pulsas «Conectar»
+  const pairs = new Map(); // código → { name, at, token }
+  const prune = () => { for (const [k, v] of pairs) if (Date.now() - v.at > 20 * 60e3) pairs.delete(k); };
+  const ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  app.post("/api/worker/pair/start", wrap((req, res) => {
+    prune();
+    if (pairs.size >= 10) return res.status(429).json({ error: "Demasiadas peticiones. Espera unos minutos." });
+    let code = "";
+    for (let i = 0; i < 8; i++) code += ABC[randomInt(ABC.length)];
+    code = code.slice(0, 4) + "-" + code.slice(4);
+    pairs.set(code, { name: String(req.body?.name || "Tu PC").slice(0, 60), at: Date.now(), token: null });
+    res.json({ code, url: `${publicBase(req)}/conectar-pc?code=${code}` });
+  }));
+  app.get("/api/worker/pair/:code", (req, res) => {
+    const code = String(req.params.code).toUpperCase();
+    const p = pairs.get(code);
+    if (!p) return res.status(404).json({ error: "El código ha caducado." });
+    if (!p.token) return res.json({ status: "pending" });
+    pairs.delete(code);
+    res.json({ status: "approved", token: p.token, server: publicBase(req) });
+  });
+  app.get("/api/pc/pending", (req, res) => {
+    prune();
+    res.json([...pairs].filter(([, v]) => !v.token).map(([code, v]) => ({ code, name: v.name, at: v.at })));
+  });
+  app.post("/api/pc/approve", wrap((req, res) => {
+    const code = String(req.body?.code || "").toUpperCase().trim();
+    const p = pairs.get(code);
+    if (!p) return res.status(404).json({ error: "Ese código ya no vale. Cierra y vuelve a abrir el editor en tu PC." });
+    p.token = workerToken();
+    res.json({ ok: true, name: p.name });
   }));
 
   app.post("/api/worker/hello", guard, wrap((req, res) => {
-    setSetting("worker:status", { at: Date.now(), claude: !!req.body?.claude, busy: req.body?.busy || null, version: req.body?.version || null });
-    res.json({ ok: true });
+    const b = req.body || {};
+    const cur = getSetting("worker:status", {}) || {};
+    // El aviso de vida llega por separado: si solo trae «sigo aquí», se conserva lo que estaba haciendo
+    const keep = b.beat && cur.at && Date.now() - cur.at < 10 * 60e3;
+    setSetting("worker:status", {
+      at: Date.now(), name: String(b.name || cur.name || "").slice(0, 60) || null,
+      claude: "claude" in b ? !!b.claude : !!cur.claude,
+      busy: "busy" in b ? b.busy || null : keep ? cur.busy || null : null,
+      version: b.version || cur.version || null,
+    });
+    res.json({ ok: true, server: getSetting("server:id", null) });
   }));
 
   // Siguiente encargo: mirar referencias > transcribir > editar
@@ -70,6 +124,64 @@ export function registerWorkerRoutes(app, wrap) {
       items: db.prepare("SELECT * FROM autoedit_items WHERE job_id = ? ORDER BY idx").all(j.id).map(row),
       media: media ? row(media) : null,
     });
+  }));
+
+  app.get("/api/worker/backup", guard, wrap((req, res) => {
+    const tables = {};
+    for (const t of BACKUP_TABLES) if (hasTable(t)) {
+      let rows = db.prepare(`SELECT * FROM ${t}`).all();
+      if (t === "settings") rows = rows.filter((r) => !SKIP_SETTING.test(r.key));
+      tables[t] = rows;
+    }
+    const files = [];
+    for (const [dir, path] of Object.entries(fileDirs())) {
+      if (!existsSync(path)) continue;
+      for (const d of readdirSync(path, { withFileTypes: true })) {
+        if (!d.isFile() || d.name.endsWith(".part")) continue;
+        files.push({ dir, name: d.name, size: statSync(join(path, d.name)).size });
+      }
+    }
+    const empty = !CONTENT_TABLES.some((t) => hasTable(t) && db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
+    res.json({ server: getSetting("server:id", null), empty, tables, files });
+  }));
+  app.get("/api/worker/backup/file/:dir/:name", guard, (req, res) => {
+    const base = fileDirs()[req.params.dir];
+    const f = base && join(base, basename(req.params.name));
+    if (!f || !existsSync(f)) return res.status(404).json({ error: "No está ese archivo." });
+    res.sendFile(f);
+  });
+
+  // Tu PC devuelve la copia: se suma a lo que haya (no borra ni pisa nada; los ajustes, solo si faltan)
+  app.post("/api/worker/restore", guard, wrap((req, res) => {
+    const tables = req.body?.tables || {};
+    let n = 0;
+    db.exec("BEGIN");
+    try {
+      for (const t of BACKUP_TABLES) {
+        if (!hasTable(t) || !Array.isArray(tables[t])) continue;
+        const cols = new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name));
+        for (const r of tables[t]) {
+          if (t === "settings" && SKIP_SETTING.test(String(r.key))) continue;
+          const keys = Object.keys(r).filter((k) => cols.has(k) && !(t === "post_insights" && k === "id"));
+          if (!keys.length) continue;
+          // Tu estilo vuelve salvo que ya hayas montado otro en el servidor nuevo
+          const cur = t === "settings" && r.key === "style:default" ? getSetting("style:default", null) : null;
+          const verb = t === "settings" && r.key === "style:default" && !cur?.aiNotes && !cur?.activePreset ? "INSERT OR REPLACE" : "INSERT OR IGNORE";
+          n += db.prepare(`${verb} INTO ${t} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).run(...keys.map((k) => r[k] ?? null)).changes;
+        }
+      }
+      db.exec("COMMIT");
+    } catch (e) { db.exec("ROLLBACK"); throw e; }
+    console.log(`[copia] Tu PC ha devuelto ${n} filas`);
+    res.json({ ok: true, rows: n });
+  }));
+  app.post("/api/worker/restore/file", guard, up.single("file"), wrap((req, res) => {
+    const base = fileDirs()[req.body?.dir];
+    if (!base || !req.file) { if (req.file) rmSync(req.file.path, { force: true }); return res.status(400).json({ error: "Falta el archivo." }); }
+    const to = join(base, basename(String(req.body.name || req.file.originalname)));
+    if (existsSync(to)) rmSync(req.file.path, { force: true });
+    else renameSync(req.file.path, to);
+    res.json({ ok: true });
   }));
 
   app.get("/api/worker/media/:id/file", guard, (req, res) => {
