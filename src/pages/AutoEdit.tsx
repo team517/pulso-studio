@@ -99,7 +99,7 @@ function ClaudeLoginNote({ worker, onReady }: { worker?: AutoInfo["worker"]; onR
       <Terminal size={18} />
       <div>
         {worker && !worker.online ? (
-          <><b>Tu PC no está conectado.</b> Los vídeos que subas esperan en cola y tu PC los edita en cuanto abras «Editor Pulso Studio.cmd» (carpeta pulso-studio). Si es la primera vez, pulsa «Conectar mi PC», guarda el archivo <code>worker.json</code> en <code>pulso-studio/data</code> y abre el editor.</>
+          <><b>Tu PC no está conectado.</b> Los vídeos que subas esperan en cola: tu PC los edita en cuanto esté encendido (el editor arranca solo al encender el ordenador; también puedes abrir «Editor Pulso Studio.cmd» en la carpeta pulso-studio). La primera vez te pide tu correo y tu contraseña.</>
         ) : (
           <><b>Claude no tiene la sesión iniciada{worker ? " en tu PC" : " en este ordenador"}.</b> Es quien decide los cortes, las palabras clave, los ángulos de cada short y qué gráfico va en cada frase. Inicia sesión en Claude y pulsa «Comprobar».</>
         )}

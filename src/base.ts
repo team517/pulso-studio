@@ -1,62 +1,50 @@
-// Dónde vive la web: en local, en la raíz; dentro del panel de ChipsFinder, bajo /studio.
-// También gestiona la entrada con la sesión del panel (solo administradores).
+// Dónde vive la web y la entrada con la cuenta del dueño (modo servidor).
 
-/** "" en local, "/studio" en el panel. */
+/** "" en la raíz del dominio; "/studio" si va bajo una ruta. */
 export const BASE = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
-/** ¿Va dentro del panel (pide sesión de ChipsFinder)? */
+/** ¿Pide entrar con cuenta? (la versión del servidor) */
 export const IN_PANEL = import.meta.env.VITE_STUDIO_AUTH === "1";
 export const insideFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
 
 const nativeFetch = window.fetch.bind(window);
 
-/** Token de la sesión del panel (ChipsFinder la guarda como "chf-auth"). */
-function panelToken(): string | null {
-  for (const store of [localStorage, sessionStorage]) {
-    try {
-      const raw = store.getItem("chf-auth");
-      if (!raw) continue;
-      const s = JSON.parse(raw);
-      const t = s?.access_token || s?.currentSession?.access_token;
-      if (t) return String(t);
-    } catch { /* bloqueado o mal formado */ }
-  }
-  return null;
+export type AuthState = { email: string; needsSetup: boolean; loggedIn: boolean };
+
+export async function authState(): Promise<AuthState> {
+  const r = await nativeFetch(`${BASE}/api/auth-state`, { credentials: "same-origin", cache: "no-store" });
+  if (!r.ok) throw new Error(`El servidor no responde (${r.status}).`);
+  return r.json();
 }
 
-export class NoAccess extends Error {
-  constructor(msg: string, public kind: "login" | "forbidden" | "error") { super(msg); }
+async function post(path: string, body: unknown) {
+  const r = await nativeFetch(`${BASE}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(data?.error || `Error ${r.status}`);
+  return data;
 }
 
-let starting: Promise<void> | null = null;
-/** Cambia la sesión del panel por la de Pulso Studio (cookie de 12 h). */
-export function startSession(): Promise<void> {
-  if (!IN_PANEL) return Promise.resolve();
-  if (starting) return starting;
-  starting = (async () => {
-    // ¿Sigue valiendo la cookie de antes? (p. ej. al abrir Pulso Studio en otra pestaña)
-    const me = await nativeFetch(`${BASE}/api/me`, { credentials: "same-origin" }).catch(() => null);
-    if (me?.ok) return;
-    const token = panelToken();
-    if (!token) throw new NoAccess("Entra en el panel de ChipsFinder con tu cuenta de administrador para usar Pulso Studio.", "login");
-    const r = await nativeFetch(`${BASE}/api/session`, { method: "POST", headers: { authorization: `Bearer ${token}` }, credentials: "same-origin" });
-    if (r.ok) return;
-    const data = await r.json().catch(() => null);
-    throw new NoAccess(data?.error || `Error ${r.status}`, r.status === 403 ? "forbidden" : r.status === 401 ? "login" : "error");
-  })().finally(() => { starting = null; });
-  return starting;
+/** Entrar con la cuenta del dueño. */
+export const login = (email: string, password: string, remember: boolean) => post("/api/login", { email, password, remember });
+/** Primera vez: crear la contraseña. */
+export const setup = (password: string, remember: boolean) => post("/api/setup", { password, remember });
+
+export async function logout(): Promise<void> {
+  await nativeFetch(`${BASE}/api/logout`, { method: "POST", credentials: "same-origin" }).catch(() => null);
+  window.location.reload();
 }
 
 const withBase = (u: string) => (BASE && /^\/(api|files)\//.test(u) ? BASE + u : u);
 
-/** Todas las llamadas a /api y /files van bajo BASE y, si la sesión caduca, se renueva sola una vez. */
+/** Todas las llamadas a /api y /files van bajo BASE; si la sesión caduca, se vuelve a la pantalla de entrada. */
 export function installFetch() {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? withBase(input) : input instanceof URL ? input : input;
-    const res = await nativeFetch(url as RequestInfo, init);
-    if (IN_PANEL && res.status === 401 && typeof input === "string" && input.startsWith("/api/") && input !== "/api/session") {
-      // Si la sesión caducó, se vuelve a la pantalla de entrada
-      try { await startSession(); } catch { window.location.reload(); return res; }
-      return nativeFetch(url as RequestInfo, init);
+    const target = typeof input === "string" ? withBase(input) : input;
+    const res = await nativeFetch(target as RequestInfo, init);
+    if (IN_PANEL && res.status === 401 && typeof input === "string" && input.startsWith("/api/")) {
+      const st = await authState().catch(() => null);
+      if (st && !st.loggedIn) window.location.reload();
     }
     return res;
   };
@@ -64,18 +52,3 @@ export function installFetch() {
 
 /** Enlaces que no pasan por fetch (descargas, OAuth). */
 export const url = withBase;
-
-/** Entrar con el correo y la contraseña de una cuenta de administrador de ChipsFinder. */
-export async function login(email: string, password: string): Promise<void> {
-  const r = await nativeFetch(`${BASE}/api/login`, {
-    method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ email, password }),
-  });
-  if (r.ok) return;
-  const data = await r.json().catch(() => null);
-  throw new NoAccess(data?.error || `Error ${r.status}`, r.status === 403 ? "forbidden" : "login");
-}
-
-export async function logout(): Promise<void> {
-  await nativeFetch(`${BASE}/api/logout`, { method: "POST", credentials: "same-origin" }).catch(() => null);
-  window.location.reload();
-}

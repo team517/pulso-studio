@@ -33,7 +33,6 @@ function loadSecret() {
 export const SECRET = loadSecret();
 
 if (IS_SERVER) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) console.warn("[config] Faltan SUPABASE_URL / SUPABASE_KEY: nadie podrá entrar.");
   if (!WORKER_TOKEN) console.warn("[config] Falta STUDIO_WORKER_TOKEN: tu PC no podrá recoger vídeos para editar.");
 }
 

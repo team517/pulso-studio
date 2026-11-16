@@ -1,11 +1,13 @@
-// Acceso en modo servidor: solo los administradores de ChipsFinder (mismas cuentas de Supabase).
-// Se entra con correo y contraseña (/api/login) o, si va dentro del panel, con el token de su sesión (/api/session).
-// El servidor lo comprueba con Supabase y, si es admin, da una cookie propia para 12 horas.
-import { IS_SERVER, BASE, SUPABASE_URL, SUPABASE_KEY, WORKER_TOKEN, sign, safeEqual, checkSignedPath } from "./config.js";
-import { getSetting } from "./db.js";
+// Acceso en modo servidor: una sola cuenta, la del dueño (STUDIO_OWNER, por defecto team@onepulso.online).
+// La contraseña la crea el propio dueño la primera vez que abre la web (nunca está en el código ni en EasyPanel):
+// se guarda cifrada (scrypt) en la base de datos. La sesión dura 180 días si marcas «Mantener la sesión».
+import { scryptSync, randomBytes } from "node:crypto";
+import { IS_SERVER, BASE, WORKER_TOKEN, sign, safeEqual, checkSignedPath } from "./config.js";
+import { getSetting, setSetting } from "./db.js";
 
 const COOKIE = "ps_s";
-const HOURS = 12;
+export const OWNER = String(process.env.STUDIO_OWNER || "team@onepulso.online").trim().toLowerCase();
+const LONG_DAYS = 180;
 
 function readCookie(req) {
   const raw = String(req.headers.cookie || "");
@@ -16,22 +18,30 @@ function readCookie(req) {
   return "";
 }
 
+const owner = () => getSetting("auth:owner", null);
+
 export function sessionOf(req) {
   const v = readCookie(req);
   const [payload, sig] = v.split(".");
   if (!payload || !sig || !safeEqual(sig, sign(payload))) return null;
   try {
     const s = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return s.exp > Date.now() / 1000 ? s : null;
+    const o = owner();
+    // Al cambiar la contraseña se cierran todas las sesiones anteriores
+    return s.exp > Date.now() / 1000 && o && s.email === o.email && s.ver === o.ver ? s : null;
   } catch { return null; }
 }
 
-function setSession(res, user) {
-  const payload = Buffer.from(JSON.stringify({ sub: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + HOURS * 3600 })).toString("base64url");
-  res.setHeader("Set-Cookie", `${COOKIE}=${payload}.${sign(payload)}; Path=${BASE || "/"}; Max-Age=${HOURS * 3600}; HttpOnly; Secure; SameSite=Lax`);
+function setSession(res, o, remember) {
+  const secs = remember ? LONG_DAYS * 86400 : 12 * 3600;
+  const payload = Buffer.from(JSON.stringify({ email: o.email, ver: o.ver, exp: Math.floor(Date.now() / 1000) + secs })).toString("base64url");
+  // Sin «mantener», cookie de sesión (se borra al cerrar el navegador)
+  res.setHeader("Set-Cookie", `${COOKIE}=${payload}.${sign(payload)}; Path=${BASE || "/"}${remember ? `; Max-Age=${secs}` : ""}; HttpOnly; Secure; SameSite=Lax`);
 }
 
-/** El PC se identifica con STUDIO_WORKER_TOKEN (EasyPanel) o con la clave creada desde la web («Conectar mi PC»). */
+const hashOf = (password, salt) => scryptSync(password, salt, 64).toString("base64url");
+
+/** El PC se identifica con STUDIO_WORKER_TOKEN (EasyPanel) o con la clave que se crea al conectarlo con tu cuenta. */
 export const isWorker = (req) => {
   const got = String(req.headers["x-worker-token"] || "");
   if (!got) return false;
@@ -40,59 +50,48 @@ export const isWorker = (req) => {
 };
 
 /** Rutas que no piden sesión: la propia entrada, el PC que edita (lleva su token) y la vuelta de las redes. */
-const OPEN = [/^\/api\/(session|login|logout)$/,/^\/api\/worker\//, /^\/api\/auth\/[a-z]+\/callback$/];
+const OPEN = [/^\/api\/(auth-state|setup|login|logout)$/, /^\/api\/worker\//, /^\/api\/auth\/[a-z]+\/callback$/];
 
 export function registerAuth(app) {
   if (!IS_SERVER) return;
 
-  // Entrar con el correo y la contraseña de tu cuenta de ChipsFinder (solo administradores)
+  app.get("/api/auth-state", (req, res) => res.json({ email: OWNER, needsSetup: !owner(), loggedIn: !!sessionOf(req) }));
+
+  // Primera vez: el dueño crea su contraseña (solo se puede mientras no exista ninguna)
+  app.post("/api/setup", (req, res) => {
+    if (owner()) return res.status(409).json({ error: "La cuenta ya tiene contraseña. Entra con ella." });
+    const password = String(req.body?.password || "");
+    if (password.length < 8) return res.status(400).json({ error: "La contraseña tiene que tener al menos 8 caracteres." });
+    const salt = randomBytes(16).toString("base64url");
+    const o = { email: OWNER, salt, hash: hashOf(password, salt), ver: 1, at: new Date().toISOString() };
+    setSetting("auth:owner", o);
+    console.log(`[auth] Contraseña creada para ${OWNER}`);
+    setSession(res, o, req.body?.remember !== false);
+    res.json({ ok: true, email: OWNER });
+  });
+
   const tries = new Map();
-  app.post("/api/login", async (req, res) => {
+  app.post("/api/login", (req, res) => {
     const ip = String(req.ip || "");
     const t = tries.get(ip) || { n: 0, at: Date.now() };
     if (Date.now() - t.at > 15 * 60e3) { t.n = 0; t.at = Date.now(); }
-    if (t.n >= 10) return res.status(429).json({ error: "Demasiados intentos. Espera unos minutos." });
+    if (t.n >= 10) return res.status(429).json({ error: "Demasiados intentos. Espera 15 minutos." });
+    const o = owner();
+    if (!o) return res.status(409).json({ error: "Primero crea la contraseña.", code: "needs_setup" });
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
-    if (!email || !password) return res.status(400).json({ error: "Escribe tu correo y tu contraseña." });
-    try {
-      const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-        method: "POST", headers: { apikey: SUPABASE_KEY, "content-type": "application/json" }, body: JSON.stringify({ email, password }),
-      });
-      const data = await r.json().catch(() => null);
-      if (!r.ok || !data?.user) {
-        t.n++; tries.set(ip, t);
-        return res.status(401).json({ error: "Correo o contraseña incorrectos." });
-      }
-      const role = String(data.user.app_metadata?.role || "").toUpperCase();
-      if (role !== "ADMIN") return res.status(403).json({ error: "Pulso Studio es solo para administradores." });
-      tries.delete(ip);
-      setSession(res, data.user);
-      res.json({ ok: true, email: data.user.email });
-    } catch (e) {
-      res.status(502).json({ error: "No se pudo comprobar la cuenta: " + e.message });
+    if (email !== o.email || !safeEqual(hashOf(password, o.salt), o.hash)) {
+      t.n++; tries.set(ip, t);
+      return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
+    tries.delete(ip);
+    setSession(res, o, req.body?.remember !== false);
+    res.json({ ok: true, email: o.email });
   });
 
   app.post("/api/logout", (req, res) => {
     res.setHeader("Set-Cookie", `${COOKIE}=; Path=${BASE || "/"}; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
     res.json({ ok: true });
-  });
-
-  app.post("/api/session", async (req, res) => {
-    const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    if (!token) return res.status(401).json({ error: "Entra desde el panel de ChipsFinder." });
-    try {
-      const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: SUPABASE_KEY, authorization: `Bearer ${token}` } });
-      if (!r.ok) return res.status(401).json({ error: "La sesión del panel ha caducado. Vuelve a entrar." });
-      const user = await r.json();
-      const role = String(user?.app_metadata?.role || "").toUpperCase();
-      if (role !== "ADMIN") return res.status(403).json({ error: "Pulso Studio es solo para administradores." });
-      setSession(res, user);
-      res.json({ ok: true, email: user.email });
-    } catch (e) {
-      res.status(502).json({ error: "No se pudo comprobar la sesión: " + e.message });
-    }
   });
 
   app.use((req, res, next) => {

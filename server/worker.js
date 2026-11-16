@@ -35,12 +35,13 @@ async function ask(question, hidden = false) {
 /** Primera vez (o clave que ya no vale): entras con tu cuenta de admin y el PC se conecta solo. */
 async function pair() {
   console.log(`\nConectar este PC con Pulso Studio (${SERVER})`);
-  console.log("Entra con tu cuenta de administrador de ChipsFinder.\n");
+  console.log("Entra con tu cuenta de Pulso Studio (la misma que en la web).\n");
   for (;;) {
-    const email = await ask("Correo: ");
+    const email = (await ask("Correo [team@onepulso.online]: ")) || "team@onepulso.online";
     const password = await ask("Contraseña: ", true);
     const r = await fetch(`${SERVER}/api/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
     const data = await r.json().catch(() => null);
+    if (data?.code === "needs_setup") { console.log("✗ Todavía no has creado la contraseña: créala en la web y vuelve a intentarlo.\n"); continue; }
     if (!r.ok) { console.log(`✗ ${data?.error || "No se pudo entrar"}\n`); continue; }
     const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
     const p = await fetch(`${SERVER}/api/pc/pair`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ renew: true }) });

@@ -4,45 +4,59 @@ import "./styles.css";
 import "./editor/editor.css";
 import App from "./App";
 import { ToastProvider } from "./ui";
-import { IN_PANEL, NoAccess, installFetch, login, startSession } from "./base";
+import { IN_PANEL, authState, installFetch, login, setup, type AuthState } from "./base";
 
 installFetch();
 
 const Logo = () => <span className="brand__logo"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M8 5.5v13l11-6.5z" fill="#fff" /></svg></span>;
 
-/** En el servidor: primero se entra con una cuenta de administrador. */
+/** En el servidor: primero se entra con la cuenta del dueño (o se crea su contraseña la primera vez). */
 function Gate() {
-  const [state, setState] = useState<"checking" | "ok" | NoAccess>(IN_PANEL ? "checking" : "ok");
+  const [st, setSt] = useState<AuthState | "ok" | null>(IN_PANEL ? null : "ok");
+  const [fail, setFail] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     if (!IN_PANEL) return;
-    startSession().then(() => setState("ok")).catch((e) => setState(e instanceof NoAccess ? e : new NoAccess(String(e?.message || e), "error")));
+    authState().then((s) => { if (s.loggedIn) setSt("ok"); else { setSt(s); setEmail(s.email); } }).catch((e) => setFail(e.message));
   }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    if (!st || st === "ok") return;
     setErr("");
-    try { await login(email, password); setState("ok"); } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+    if (st.needsSetup) {
+      if (password.length < 8) return setErr("Usa al menos 8 caracteres.");
+      if (password !== repeat) return setErr("Las dos contraseñas no coinciden.");
+    }
+    setBusy(true);
+    try {
+      if (st.needsSetup) await setup(password, remember);
+      else await login(email, password, remember);
+      setSt("ok");
+    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
   }
 
-  if (state === "ok") return <App />;
+  if (st === "ok") return <App />;
   return (
     <div className="gate">
       <form className="gate__card" onSubmit={submit}>
         <Logo />
         <h1>Pulso Studio</h1>
-        {state === "checking" ? <p className="muted">Comprobando tu acceso…</p> : (
+        {fail ? <p className="gate__err">{fail}</p> : !st ? <p className="muted">Comprobando tu acceso…</p> : (
           <>
-            <p>Entra con tu cuenta de administrador de ChipsFinder.</p>
-            <input className="input" type="email" autoComplete="username" placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-            <input className="input" type="password" autoComplete="current-password" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            {(err || (state.kind !== "login" && state.message)) && <p className="gate__err">{err || state.message}</p>}
-            <button className="btn btn--primary" type="submit" disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
+            <p>{st.needsSetup ? <>Primera vez: crea la contraseña de <b>{st.email}</b>. Solo esta cuenta puede entrar.</> : "Entra con tu cuenta."}</p>
+            <input className="input" type="email" autoComplete="username" placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} readOnly={st.needsSetup} required />
+            <input className="input" type="password" autoComplete={st.needsSetup ? "new-password" : "current-password"} placeholder={st.needsSetup ? "Nueva contraseña" : "Contraseña"} value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
+            {st.needsSetup && <input className="input" type="password" autoComplete="new-password" placeholder="Repite la contraseña" value={repeat} onChange={(e) => setRepeat(e.target.value)} required />}
+            <label className="gate__remember"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Mantener la sesión iniciada</label>
+            {err && <p className="gate__err">{err}</p>}
+            <button className="btn btn--primary" type="submit" disabled={busy}>{busy ? "Un momento…" : st.needsSetup ? "Crear contraseña y entrar" : "Entrar"}</button>
           </>
         )}
       </form>
