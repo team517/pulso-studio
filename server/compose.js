@@ -15,13 +15,32 @@ function ffmpeg(args) {
   });
 }
 
+/** Cuánto se habla en un vídeo (0-1): parte del tiempo que no es silencio. */
+async function speechShare(file, dur) {
+  const err = await new Promise((resolve) => {
+    const p = spawn("ffmpeg", ["-hide_banner", "-t", String(Math.min(dur, 120)), "-i", file, "-vn", "-af", "silencedetect=n=-35dB:d=0.4", "-f", "null", "-"], { windowsHide: true });
+    let e = ""; p.stderr.on("data", (d) => { e += d; }); p.on("close", () => resolve(e)); p.on("error", () => resolve(""));
+  });
+  if (/does not contain any stream|matches no streams|Output file #0 does not contain/i.test(err)) return 0;
+  const silent = [...err.matchAll(/silence_duration: ([\d.]+)/g)].reduce((a, m) => a + Number(m[1]), 0);
+  return Math.max(0, Math.min(1, 1 - silent / Math.max(1, Math.min(dur, 120))));
+}
+
 /**
  * Hace el vídeo junto. layout: "stack" (arriba/abajo 1080×1920) | "side" (lado a lado 1920×1080).
  * audio: "a" | "b" | "mix". Devuelve el nombre del archivo en DIRS.media.
  */
-export async function composeVideos(a, b, { layout = "stack", audio = "a" } = {}) {
+export async function composeVideos(a, b, { layout = "stack", audio = "auto" } = {}) {
   const fa = join(DIRS.media, a.file), fb = join(DIRS.media, b.file);
   const D = Math.max(1, Math.min(Number(a.duration) || 0, Number(b.duration) || 0) || Number(a.duration) || 10);
+  // Cerebro de editor: se queda la voz del que habla y se silencia el otro (si hablan los dos, se oyen los dos)
+  let chosen = audio;
+  if (audio === "auto") {
+    const [sa, sb] = [a.has_audio ? await speechShare(fa, D) : 0, b.has_audio ? await speechShare(fb, D) : 0];
+    chosen = sb > sa + 0.15 ? "b" : "a"; // empate: la del vídeo principal (arriba / izquierda); para oír los dos, «Las dos»
+    console.log(`[juntar] voz: A ${Math.round(sa * 100)} %, B ${Math.round(sb * 100)} % → ${chosen}`);
+  }
+  audio = chosen;
   const stack = layout !== "side";
   const [W, H] = stack ? [1080, 1920] : [1920, 1080];
   const [cw, ch] = stack ? [W, (H - 6) / 2] : [(W - 6) / 2, H];
@@ -42,7 +61,7 @@ export async function composeVideos(a, b, { layout = "stack", audio = "a" } = {}
     // Alguno sin sonido: se usa el que lo tenga (o ninguno)
     await ffmpeg([...base, "-filter_complex", `${cover(0)};${cover(1)};${join2}`, "-map", "[vv]", "-map", audio === "b" ? "1:a?" : "0:a?", ...video, "-c:a", "aac", "-b:a", "192k", out]);
   }
-  return { id, file, width: W, height: H, duration: D, size: statSync(out).size };
+  return { id, file, width: W, height: H, duration: D, size: statSync(out).size, audio };
 }
 
 /** Guarda el vídeo junto en la Biblioteca (mismo formato que una subida). */

@@ -85,7 +85,7 @@ export const api = {
     if (opts.folder) q.set("folder", opts.folder);
     return req<(Media & { autoeditJob?: string })[]>("POST", "/api/media" + (q.size ? `?${q}` : ""), fd);
   },
-  compose: (b: { a: string; b: string; layout: "stack" | "side"; audio: "a" | "b" | "mix"; auto: boolean; folder: string | null }) => req<Media & { autoeditJob?: string }>("POST", "/api/media/compose", b),
+  compose: (b: { a: string; b: string; layout: "stack" | "side"; audio: "auto" | "a" | "b" | "mix"; auto: boolean; folder: string | null }) => req<Media & { autoeditJob?: string }>("POST", "/api/media/compose", b),
   moveMedia: (id: string, folder_id: string | null) => req<Media>("PATCH", `/api/media/${id}`, { folder_id }),
   folders: () => req<Folder[]>("GET", "/api/folders"),
   createFolder: (name: string) => req<Folder>("POST", "/api/folders", { name }),

@@ -118,7 +118,7 @@ app.post("/api/media/compose", wrap(async (req, res) => {
   if (!a || !b) throw Object.assign(new Error("Elige dos vídeos de la Biblioteca."), { status: 400 });
   if (a.id === b.id) throw Object.assign(new Error("Elige dos vídeos distintos."), { status: 400 });
   const layout = req.body?.layout === "side" ? "side" : "stack";
-  const audio = ["a", "b", "mix"].includes(req.body?.audio) ? req.body.audio : "a";
+  const audio = ["a", "b", "mix", "auto"].includes(req.body?.audio) ? req.body.audio : "auto";
   const r = await composeVideos(a, b, { layout, audio });
   const thumb = await makeThumb(join(DIRS.media, r.file), `${r.id}.jpg`, Math.min(1, r.duration / 3)).catch(() => null);
   const name = String(req.body?.name || `${a.name.replace(/\.[^.]+$/, "")} + ${b.name.replace(/\.[^.]+$/, "")}`).slice(0, 160);

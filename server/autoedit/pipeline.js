@@ -142,6 +142,7 @@ async function designMotions(job, plan, words, work, persist = true) {
       g.design = await designMotion({
         brief: String(g.brief || "").slice(0, 400), texts: (Array.isArray(g.texts) ? g.texts : []).map(String).slice(0, 6), dur,
         words: words.slice(from, to + 1).map((w) => w.w).join(" "),
+        timing: words.slice(from, to + 1).map((w) => `${w.w}@${Math.max(0, w.start - words[from].start + 0.03).toFixed(2)}`).join(" "),
         style: { ...theme, notes: [String(st.aiNotes || "").slice(0, 600), job.options?.notes ? `El cliente pide: ${String(job.options.notes).slice(0, 400)}` : ""].filter(Boolean).join(" · "), sampleCss },
         vars: { fTitle: '"Inter", "Segoe UI", sans-serif', fKeyword: '"Anton", "Impact", sans-serif', ...theme },
         dir: join(work, "motion", String(k + 1)), askClaude, chromePath: chromePath(),
@@ -315,6 +316,26 @@ const SFX_FILES = {
   click: { file: "uiclick.wav", db: -22, max: 0.3 }, riser: { file: "riser.wav", db: -24 }, sparkle: { file: "glitch.wav", db: -28, max: 0.4 },
   typing: { file: "uiclick.wav", db: -30, max: 0.08 },
 };
+// Sonidos REALES grabados (biblioteca CC0 de Kenney y Freesound, ver assets/sfx-lib/LICENCIAS.md): nunca pitidos sintetizados.
+// Varias tomas por tipo, que se van turnando para que no suene repetido.
+const SFX_LIB = join(HERE, "assets", "sfx-lib");
+const LIB = {
+  hit: { db: -17, files: ["kit/impact.ogg", "impact/fs524817.ogg", "impact/kenney-impact-impactsoft-heavy-000.ogg"] },
+  whoosh: { db: -20, files: ["kit/whoosh.ogg", "whoosh/fs393811.ogg", "whoosh/fs-683101-quick-woosh.ogg", "transition/fs-786514-swoosh-v2.ogg", "whoosh/fs-169867-swoosh.ogg"] },
+  pop: { db: -22, max: 0.4, files: ["kit/pop.ogg", "pop/fs527522.ogg", "pop/fs323738.ogg", "pop/kenney-interface-pluck-001.ogg"] },
+  click: { db: -22, max: 0.35, files: ["kit/click.ogg", "click/kenney-interface-click-001.ogg", "click/kenney-interface-select-001.ogg"] },
+  riser: { db: -23, files: ["kit/riser.ogg", "riser/fs867126.ogg"] },
+  sparkle: { db: -24, max: 0.8, files: ["ding/kenney-interface-glass-001.ogg", "ding/fs-634690-lil-pip.ogg", "ding/kenney-interface-confirmation-001.ogg"] },
+  typing: { db: -30, max: 0.12, files: ["kit/tick.ogg", "click/kenney-interface-tick-001.ogg"] },
+};
+/** El archivo de cada efecto: de la biblioteca real (turnando tomas) o, si faltara, el sintetizado de antes. */
+function sfxFor(kind, n) {
+  const l = LIB[kind] || LIB.pop;
+  const f = join(SFX_LIB, l.files[n % l.files.length]);
+  if (existsSync(f)) return { file: f, db: l.db, ...(l.max ? { max: l.max } : {}) };
+  const s = SFX_FILES[kind] || SFX_FILES.pop;
+  return { file: join(SFX_DIR, s.file), db: s.db, ...(s.max ? { max: s.max } : {}) };
+}
 
 /** Revisión automática: Claude mira fotogramas clave con la lista de la skill. */
 /** Revisión medida (sin mirar imágenes): fotogramas negros, imagen congelada, volumen, pico y duración. */
@@ -397,11 +418,12 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   // Sonido
   setItem(item.id, { status: "mixing", step: "Mezclando voz, efectos y música (−14 LUFS)", progress: 0.82 });
   await ensureSfx();
+  const count = {};
   const sfx = (out.sfx || []).map((e) => {
-    const s = SFX_FILES[e.kind] || SFX_FILES.pop;
-    return { file: join(SFX_DIR, s.file), t: Math.max(0, +e.t.toFixed(3)), db: s.db, ...(s.max ? { max: s.max } : {}) };
+    count[e.kind] = (count[e.kind] || 0) + 1;
+    return { ...sfxFor(e.kind, count[e.kind] - 1), t: Math.max(0, +e.t.toFixed(3)) };
   });
-  if (!sfx.some((e) => e.t < 0.1)) sfx.unshift({ file: join(SFX_DIR, "impact.wav"), t: 0, db: -18 });
+  if (!sfx.some((e) => e.t < 0.1)) sfx.unshift({ ...sfxFor("hit", 0), t: 0, db: -18 });
   const mixDir = join(dir, "mix");
   mkdirSync(mixDir, { recursive: true });
   link(join(work, "words.json"), join(mixDir, "words.json"));

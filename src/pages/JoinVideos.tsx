@@ -9,7 +9,7 @@ export default function JoinVideos({ videos, folder, onClose, onDone }: { videos
   const [a, setA] = useState<string>(videos[0]?.id ?? "");
   const [b, setB] = useState<string>(videos[1]?.id ?? "");
   const [layout, setLayout] = useState<"stack" | "side">("stack");
-  const [audio, setAudio] = useState<"a" | "b" | "mix">("a");
+  const [audio, setAudio] = useState<"auto" | "a" | "b" | "mix">("auto");
   const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const A = videos.find((v) => v.id === a), B = videos.find((v) => v.id === b);
@@ -53,6 +53,7 @@ export default function JoinVideos({ videos, folder, onClose, onDone }: { videos
           <Pick value={b} onPick={setB} label={`Vídeo ${second}`} />
           <label className="field"><span className="field__label">Sonido</span>
             <div className="seg">
+              <button type="button" className={audio === "auto" ? "is-on" : ""} onClick={() => setAudio("auto")} title="Deja la voz del que habla (o la del principal) y silencia el otro">Automático</button>
               <button type="button" className={audio === "a" ? "is-on" : ""} onClick={() => setAudio("a")}>La voz {first}</button>
               <button type="button" className={audio === "b" ? "is-on" : ""} onClick={() => setAudio("b")}>La {second}</button>
               <button type="button" className={audio === "mix" ? "is-on" : ""} onClick={() => setAudio("mix")}>Las dos</button>

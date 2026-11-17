@@ -57,7 +57,9 @@ export function motionCss(design, id) {
   return `#${id} .mwrap { position: absolute; inset: 0; container-type: size; overflow: hidden; }\n#${id} .mwrap { ${design.css} }`;
 }
 
-const PROMPT = ({ brief, texts, dur, style, words }) => `Eres un motion designer top (estilo anuncios de Apple / reels de agencia). Diseña UNA animación a PANTALLA COMPLETA de ${dur.toFixed(1)} s para este momento de un reel, mientras la persona dice: «${words}».
+const PROMPT = ({ brief, texts, dur, style, words, timing }) => `Eres un motion designer top (After Effects, estilo anuncios de Apple / reels de agencia). Diseña UNA animación a PANTALLA COMPLETA de ${dur.toFixed(1)} s para este momento de un reel, mientras la persona dice: «${words}».
+${timing ? `Cuándo dice cada palabra (segundos desde que empieza la animación): ${timing}
+` : ""}
 
 Qué tiene que contar: ${brief}
 Textos que deben salir (cortos, tal cual o mejor): ${JSON.stringify(texts)}
@@ -70,7 +72,14 @@ Reglas técnicas (OBLIGATORIAS):
 - Sin JavaScript, sin <img>, sin url(). Iconos: {{icon:nombre}} con nombre de: ${Object.keys(ICONS).join(", ")}.
 - Fondo: un fondo propio y rico (degradados, luces, rejilla, grano con CSS) que tape el vídeo por completo.
 - La animación es una lista de movimientos (GSAP): {"sel":".m .titulo","from":{"opacity":0,"yPercent":60},"to":{"opacity":1,"yPercent":0},"at":0.2,"dur":0.6,"ease":"power3.out","stagger":0.08}. "at" en segundos desde que empieza la escena (0 a ${dur.toFixed(1)}). Propiedades: opacity, xPercent, yPercent (desplazamientos SIEMPRE en % del propio elemento, nunca px), scale, scaleX, scaleY, rotation, filter (blur/brightness), clipPath (inset(...) en %), color, backgroundColor. Selectores sencillos: ".m .clase" (sin :nth-child ni >). Usa "from" con el estado inicial (oculto) — el elemento se ve en su estado CSS al final.
-- Ritmo de editor: entrada con impacto en 0-0,4 s, cada texto aparece cuando se dice, algo se mueve siempre (deriva lenta del fondo, brillo que pasa), nada se queda quieto, todo legible al menos 1 s. Sin rebotes exagerados.
+- Ritmo de editor: entrada con impacto en 0-0,4 s; CADA CAMBIO CAE EN SU PALABRA (usa los tiempos de arriba: el "at" de cada texto = cuando se dice, 0,05 s antes); un cambio por golpe de voz, separados 0,4-1,2 s; algo se mueve siempre (deriva lenta del fondo, la cámara empuja despacio), nada se queda quieto, todo legible al menos 1 s.
+- Oficio de motion designer (método «motion-broll», MIT):
+  · UNA forma protagonista que se TRANSFORMA (tamaño, esquinas, color) de un estado al siguiente en lugar de tarjetas que aparecen sueltas: p. ej. una píldora que crece a tarjeta y luego a control. Su contenido cambia con un desenfoque corto: lo viejo sale en 0,12 s (opacity 0 + filter blur), lo nuevo entra 0,08 s después en 0,25 s.
+  · Muelles con un rebote mínimo como mucho (ease "back.out(1.15)" o "expo.out"/"power4.out"); bordes que estiran: el borde que avanza llega antes (más rápido) que el que sigue.
+  · Una "cámara": envuelve todo en un .cam y anima su scale/xPercent/yPercent para que cada estado llene el encuadre (empuje lento 1→1.04 durante el estado; reencuadre en cada cambio).
+  · Vocabulario de interacciones reales (elige según lo que dice): píldora + clic, barra de progreso que se llena, check/aviso de confirmación, isla de estado, tarjeta de detalle, slider, interruptor, pestañas, gráfica con tooltip, buscador con lista que filtra, archivo que se arrastra a un destino, terminal escribiendo, comparación lado a lado, tarjeta de capítulo. Un cursor (flecha) puede pulsar: se mueve en arco, al clic scale 0.85→1.
+  · Nunca inventes cifras, precios ni resultados: solo lo que dice la persona; si no hay dato, barras relativas o líneas esqueleto.
+  · Prohibido: rebotes exagerados, partículas, aspecto de plantilla o PowerPoint, tiempo muerto, iconos de grosores mezclados.
 - Calidad: jerarquía clara (1 idea grande), tipografía grande y apretada, márgenes generosos (zona segura: deja 12cqh arriba y 18cqh abajo libres de texto importante), contraste alto. Nada de aspecto de plantilla o de PowerPoint.
 
 Responde SOLO JSON: {"html":"<div class=\\"m\\">...</div>","css":".m{...}","tweens":[...],"note":"una frase de la idea"}`;
@@ -119,9 +128,9 @@ async function snap(design, dur, outDir, vars, chromePath) {
  * Diseña (y revisa) la animación de un momento. askClaude viene de brain.js.
  * Devuelve el diseño limpio o null si no sale.
  */
-export async function designMotion({ brief, texts, dur, words, style, vars, dir, askClaude, chromePath }) {
+export async function designMotion({ brief, texts, dur, words, timing, style, vars, dir, askClaude, chromePath }) {
   mkdirSync(dir, { recursive: true });
-  const r = await askClaude(PROMPT({ brief, texts, dur, style, words }), { timeoutMs: 8 * 60e3, maxTurns: 4 });
+  const r = await askClaude(PROMPT({ brief, texts, dur, style, words, timing }), { timeoutMs: 8 * 60e3, maxTurns: 4 });
   let design = normalizeMotion(r, dur);
   if (!design) return null;
   if (chromePath && existsSync(chromePath)) {
