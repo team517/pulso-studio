@@ -5,6 +5,7 @@ import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronU
 import { api, fmtSize, fmtTime, type Media } from "../api";
 import { autoApi, setPrefill, type AutoItem, type AutoJob, type AutoVariant } from "../autoedit-api";
 import { styleApi } from "../style-api";
+import UploadWizard from "./UploadWizard";
 import { Field, Modal, navigate, useToast } from "../ui";
 import { ACCEPT, useUploader } from "../editor/MediaPanel";
 import "./autoedit.css";
@@ -168,6 +169,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
   const [busy, setBusy] = useState(0);
   const [notes, setNotesRaw] = useState(readNotes);
   const [ref, setRef] = useState<RefChoice>(null);
+  const [queue, setQueue] = useState<Media[]>([]);
   const setNotes = (v: string) => { setNotesRaw(v); try { localStorage.setItem(NOTES_KEY, v); } catch { /* sin almacenamiento */ } };
   async function go(files: File[]) {
     const vids = files.filter((f) => f.type.startsWith("video/") || /.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
@@ -175,14 +177,10 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
     setBusy(vids.length);
     try {
       const up = await api.upload(vids);
-      let started = 0;
-      for (const m of up.filter((x) => x.kind === "video")) {
-        if (!m.has_audio) { toast(`«${m.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"); continue; }
-        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", notes, ref });
-        started++;
-      }
-      if (started) toast(started === 1 ? "Subido: ya se está editando. Las versiones irán apareciendo aquí." : `${started} vídeos subidos y editándose.`);
-      onStarted();
+      const ok = up.filter((x) => x.kind === "video" && (x.has_audio || (toast(`«${x.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"), false)));
+      // Preguntas rápidas: una pantalla por vídeo subido
+      setQueue(ok);
+      void variants;
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(0); }
   }
   return (
@@ -203,6 +201,8 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       <textarea className="textarea" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
         placeholder="Ej.: corte rápido, sin gráficos al principio, una animación a pantalla completa cuando explico los 3 pasos, la palabra clave en amarillo…" />
     </label>
+    {queue[0] && <UploadWizard key={queue[0].id} media={queue[0]} notes={notes} refChoice={ref} RefPicker={RefPicker}
+      onClose={() => setQueue((q) => q.slice(1))} onStarted={() => { setQueue((q) => q.slice(1)); onStarted(); }} />}
     <label className="ae-notes">
       <span><Film size={14} /> Vídeo de referencia <small>(opcional: lo edita como ese vídeo, con sus mismos colores — LUT medida)</small></span>
       <RefPicker value={ref} onChange={setRef} />

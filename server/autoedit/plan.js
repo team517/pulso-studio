@@ -81,6 +81,15 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 - logo: {"type":"logo","from":i,"to":j,"brand":"Instagram","label":"texto corto opcional"}   (logo OFICIAL de una marca o herramienta que se nombra: Gmail, Notion, HubSpot, WhatsApp, Stripe…; más de 3.000 disponibles)
 - scene: {"type":"scene","from":i,"to":j,"kicker":"ASÍ FUNCIONA","title":"Tu sistema","steps":[{"icon":"target","label":"Buscamos clientes","at":k},...]}   (pantalla completa, 2-4 pasos; tapa a la persona: úsala 1 vez en un tramo explicativo de 4-8 s)`;
 
+/** Método de edición de la skill «editar-reels-claude» (Viegas Estudio) + «motion-broll»: se aplica en CADA edición. */
+const EDIT_METHOD = `MÉTODO DE EDICIÓN (síguelo siempre, como un editor profesional que recibe notas):
+- Pasada de subtítulos: frases cortas en trozos de 1-3 palabras que se leen con sentido, UNA palabra clave por frase (la que más importa), a la altura del pecho, nunca sobre la cara; entradas suaves sin rebote.
+- Pasada de motion graphics: primero el plan, un gráfico por idea, disparado EN su palabra; la tarjeta empieza por debajo de la barbilla incluso con el zoom máximo; nunca repitas con un gráfico lo que ya dice el subtítulo; logos y capturas reales cuando se nombra una marca o un producto; como mucho una escena a pantalla completa por idea grande, con fondo limpio.
+- Animaciones a pantalla completa (motion-broll): úsalas cuando la frase describe algo que se VE (un proceso, una comparación, una cifra, un cambio de capítulo); 3-10 s y se devuelve la cara; nunca en el primer segundo del gancho ni en frases personales u opinión; al menos ~2 s de cara entre una y otra.
+- Zooms: suaves, del 5 al 10 %, con curva (nunca cortes secos); la cámara empuja despacio dentro de cada frase.
+- Sonido: un efecto por evento visual (golpe en el gancho, whoosh en cambios de escena, clic en los checks), 20-40 ms antes del visual; música por debajo de la voz.
+- Cada nota del cliente es una regla para TODO el vídeo, no solo para un momento.`;
+
 export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "", angle = "", hook = "" } = {}) {
   const duration = words.length ? words[words.length - 1].end : 0;
   if (useClaude) {
@@ -103,6 +112,8 @@ ${styleNotes}
 ` : ""}6. "post": texto para publicar (2-4 líneas que inviten a ver el vídeo, en español, y 3-5 hashtags al final) y "youtubeTitle" (máx. 70 caracteres).${isShort ? "\n7. Es un short sacado de un vídeo más largo: el gancho tiene que funcionar sin contexto." + (angle ? " Su ángulo es «" + angle + "»: que los gráficos y el titular lo refuercen." : "") + (hook ? " Titular de gancho propuesto: «" + hook + "» (úsalo en hook.title salvo que tengas uno mejor)." : "") : ""}
 
 ${GRAPHIC_HELP}
+
+${EDIT_METHOD}
 
 Responde SOLO con JSON:
 {"topic":"3-5 palabras","hook":{"title":"...","subtitle":"..."},"post":{"caption":"...","youtubeTitle":"..."},
