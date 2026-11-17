@@ -2,7 +2,9 @@
 // (Método de la skill: Whisper alarga palabras sobre los silencios, así que los cortes se miden en el audio.)
 import { spawn } from "node:child_process";
 
-export const CUT = { pause: 0.4, breath: 0.1, silenceDb: -38, energyDb: -45, mergeGap: 0.15, fps: 30 };
+// Cortes de editor dinámico: fuera cualquier silencio entre palabras de más de 0,22 s y poco aire alrededor
+// (los bordes los marca la energía real de la voz, así no se come ninguna sílaba)
+export const CUT = { pause: 0.22, breath: 0.05, silenceDb: -38, energyDb: -45, mergeGap: 0.08, fps: 30 };
 
 const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
@@ -85,7 +87,11 @@ export function keepSegments(words, drops, en, totalDur) {
   });
   if (cur) groups.push(cur);
 
-  const loud = (t0, t1) => en.filter((e) => e.t >= t0 && e.t < t1 && e.db > CUT.energyDb);
+  // Umbral de voz según la grabación: el ruido de fondo (percentil 15) + 9 dB, nunca por debajo de -45 dB
+  const sorted = en.map((e) => e.db).filter((d) => d > -90).sort((x, y) => x - y);
+  const floor = sorted.length ? sorted[Math.floor(sorted.length * 0.15)] : -60;
+  const thr = Math.max(CUT.energyDb, Math.min(-28, floor + 9));
+  const loud = (t0, t1) => en.filter((e) => e.t >= t0 && e.t < t1 && e.db > thr);
   const segs = groups.map(({ first, last, dropBefore, dropAfter }) => {
     const ws = words[first], we = words[last];
     let s, e;
