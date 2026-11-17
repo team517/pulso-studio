@@ -326,6 +326,10 @@ async function doJob({ job, items, media }) {
   log(busy);
   await ensureMedia(media);
   await syncStyle();
+  // Tus imágenes y sonidos de la Biblioteca (para que Claude los pueda usar en la edición)
+  try {
+    for (const m of await call("GET", "/api/media")) if ((m.kind === "image" || m.kind === "audio") && (m.size || 0) < 60e6) await ensureMedia(m);
+  } catch (e) { log("No se pudo traer la Biblioteca:", e.message); }
   const refId = job.options?.ref?.media;
   if (refId) { try { await ensureMedia(await call("GET", `/api/media/${refId}`)); } catch (e) { log("No se pudo bajar el vídeo de referencia:", e.message); } }
   mirrorJob(job, items);

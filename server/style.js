@@ -85,6 +85,13 @@ export function styleNotesForAI() {
   if (s.caption.uppercase) parts.push("Los textos de pantalla van en MAYÚSCULAS.");
   if (s.activePreset && !(Array.isArray(s.templates) && s.templates.length)) parts.push("ESTILO COPIADO DE REFERENCIAS SIN GRÁFICOS PROPIOS: no pongas tarjetas, anillos, iconos ni escenas (graphics vacío). Lo importante va en el SUBTÍTULO como palabra clave (cifras y palabras fuertes) y en los zooms.");
   if (s.activePreset && Array.isArray(s.templates) && s.templates.length) parts.push("Usa SOLO los gráficos copiados de las referencias (type custom); ningún otro tipo.");
+  // Tus imágenes y sonidos de la Biblioteca: Claude los puede usar
+  try {
+    const imgs = db.prepare("SELECT id, name FROM media WHERE kind = 'image' ORDER BY created_at DESC LIMIT 30").all();
+    const snds = db.prepare("SELECT id, name, duration FROM media WHERE kind = 'audio' AND duration < 20 ORDER BY created_at DESC LIMIT 30").all();
+    if (imgs.length) parts.push(`IMÁGENES DE SU BIBLIOTECA (logos, capturas, fotos; úsalas cuando se hable de ellas): ${imgs.map((m) => `{"type":"image","media":"${m.id}","from":i,"to":j,"caption":"opcional"} = «${m.name}»`).join(" · ")}`);
+    if (snds.length) parts.push(`SONIDOS DE SU BIBLIOTECA (efectos propios; ponlos en "sounds":[{"media":"id","at":índice de palabra}] cuando encajen): ${snds.map((m) => `${m.id} = «${m.name}» (${(m.duration || 0).toFixed(1)} s)`).join(" · ")}`);
+  } catch { /* sin biblioteca */ }
   parts.push("Edición de editor humano, no de plantilla: nunca el mismo tipo de gráfico dos veces, nunca un gráfico que diga lo mismo que el subtítulo en ese momento, y deja respirar el vídeo (la cara y los subtítulos mandan).");
   if (Array.isArray(s.templates) && s.templates.length && s.graphics !== "none") {
     parts.push(`GRÁFICOS COPIADOS DE TUS REFERENCIAS (úsalos EN VEZ de card/checklist/stat cuando encajen; mismo diseño que el original): `

@@ -78,6 +78,7 @@ const GRAPHIC_HELP = `Tipos de gráfico (elige el que mejor cuente la idea; text
 - chart: {"type":"chart","from":i,"to":j,"title":"30 reuniones / mes","points":[2,5,4,9,14,22,30]}
 - icons: {"type":"icons","from":i,"to":j,"items":[{"icon":"gear","label":"Automatiza","at":k},...]}   (2-4)
 - motion: {"type":"motion","from":i,"to":j,"brief":"qué cuenta la animación (1-2 frases, con lo que dice la persona)","texts":["2-5 textos cortos que salen"]}   (ANIMACIÓN A PANTALLA COMPLETA diseñada a medida por un motion designer, tapa a la persona 3-6 s: la mejor herramienta para explicar un proceso, una lista, una cifra o un antes/después; pon 1-2 por vídeo en los momentos explicativos, separadas)
+- logo: {"type":"logo","from":i,"to":j,"brand":"Instagram","label":"texto corto opcional"}   (logo OFICIAL de una marca o herramienta que se nombra: Gmail, Notion, HubSpot, WhatsApp, Stripe…; más de 3.000 disponibles)
 - scene: {"type":"scene","from":i,"to":j,"kicker":"ASÍ FUNCIONA","title":"Tu sistema","steps":[{"icon":"target","label":"Buscamos clientes","at":k},...]}   (pantalla completa, 2-4 pasos; tapa a la persona: úsala 1 vez en un tramo explicativo de 4-8 s)`;
 
 export async function makePlan(words, { vocab = "", useClaude = true, isShort = false, styleNotes = "", angle = "", hook = "" } = {}) {
@@ -144,6 +145,7 @@ export function validatePlan(plan, words) {
     phrases,
     graphics,
     behind: (Array.isArray(plan.behind) ? plan.behind : []).filter((b) => b?.text).map((b) => ({ from: idx(b.from), to: idx(b.to ?? b.from), text: String(b.text).toUpperCase().slice(0, 14) })),
+    sounds: (Array.isArray(plan.sounds) ? plan.sounds : []).filter((x) => x && x.media && Number.isFinite(Number(x.at))).slice(0, 12).map((x) => ({ media: String(x.media), at: idx(x.at) })),
     zooms: (Array.isArray(plan.zooms) ? plan.zooms : []).filter((z) => Number.isFinite(z.at)).map((z) => ({ at: idx(z.at), to: Math.min(1.1, Math.max(1, Number(z.to) || 1)), dur: Math.min(4, Math.max(0.6, Number(z.dur) || 1.6)) })),
   };
 }

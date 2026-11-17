@@ -245,6 +245,14 @@ function lookLayers(geo, D) {
 // ─────────────── etapa 2: composición final ───────────────
 export function buildFinalProject(input, geo, plan, baseVideo, dir, hasMatte) {
   copyAssets(dir);
+  // Imágenes de tu Biblioteca que usa este vídeo
+  for (const g of plan.slot) {
+    if (g.type !== "image" || !g.file || !fs.existsSync(g.file)) continue;
+    fs.mkdirSync(path.join(dir, "assets", "img"), { recursive: true });
+    const name = path.basename(g.file);
+    fs.copyFileSync(g.file, path.join(dir, "assets", "img", name));
+    g.src = `assets/img/${name}`;
+  }
   linkOrCopy(baseVideo, path.join(dir, "assets", "base.mp4"));
   const { W, H } = geo, D = input.duration, theme = input.theme;
   const sfx = [{ t: 0, kind: "hit" }];

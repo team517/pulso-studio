@@ -5,6 +5,7 @@ import { icon } from "./icons.js";
 import { esc, fitLine, fitWrap, textEm, fmtNum, r2, r3, rgba, clamp, shadeHex, ensureContrast } from "./text.js";
 import { S, IN, IN_SOFT, vb, dist } from "./style.js";
 import { fillTemplate, scopedCss } from "../../gfx-template.js";
+import { logoSvg } from "../../brand-logos.js";
 
 export const SPRING = `const rb = (vel, fuerza, rebotes, frenado, t) => vel * fuerza * Math.sin(rebotes * t * 2 * Math.PI) / Math.exp(frenado * t);
         const VB = (fuerza = 0.12, llegada = 0.3) => (p) => { const tot = llegada + 0.8, t = p * tot; if (t < llegada) { const u = t / llegada; return u * u; } return 1 + rb(2 / llegada, fuerza, 2.5, 5, t - llegada); };`;
@@ -376,6 +377,35 @@ B.icons = (g, c) => {
   });
   const colW = items.map((it) => Math.max(132, it.label ? textEm(it.label, FT()) * lsz : 0));
   return { html, w: Math.min(860, colW.reduce((a, b) => a + b, 0) + (items.length - 1) * 30), h: 132 + (items.some((i) => i.label) ? 12 + lsz * 1.3 : 0), noFadeIn: true };
+};
+
+// Logo de una marca (Simple Icons): baldosa de cristal con el logo oficial y su nombre
+B.logo = (g, c) => {
+  const svg = logoSvg(g.brand, { size: 74 }) || icon(g.icon || "star");
+  const label = String(g.label || g.brand || "");
+  const L = label ? fitWrap(label, FT(), 420, 1, 40, 24, -0.02) : null;
+  const html = `<div class="glass gp e0 lgo"><span class="sweep"></span><div class="lgo-t">${svg}</div>${L ? `<div class="lgo-l tx" style="font-size:${L.size}px">${esc(label)}</div>` : ""}</div>`;
+  c.css(`#${c.id} .lgo { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 34px 44px 30px; }
+        #${c.id} .lgo-t { width: 128px; height: 128px; border-radius: 34px; display: grid; place-items: center; background: rgba(255,255,255,.08); box-shadow: inset 0 1.5px 0 rgba(255,255,255,.25), 0 14px 40px -12px rgba(0,0,0,.6); }
+        #${c.id} .lgo-l { font-weight: 650; letter-spacing: -.01em; }`);
+  POP(`#${c.id} .lgo-t`, c.s + 0.06, "scale: .5, rotation: -10", "scale: 1, rotation: 0").forEach(c.js);
+  c.js(`gtl.fromTo("#${c.id} .lgo-l", ${TXT_IN(10)}, ${r3(c.s + 0.22)});`);
+  return { html, w: Math.max(260, (L ? textEm(label, FT()) * L.size : 0) + 100), h: 128 + 64 + (L ? L.size * 1.3 + 18 : 0) };
+};
+
+// Imagen de tu Biblioteca (logo, captura, foto): tarjeta con la imagen y un pie opcional
+B.image = (g, c) => {
+  const src = g.src; // ruta dentro del proyecto (assets/img/…)
+  if (!src) return B.card({ ...g, title: g.caption || "", subtitle: "" }, c);
+  const ar = Math.max(0.4, Math.min(2.5, Number(g.aspect) || 1.5));
+  const w = ar >= 1 ? 760 : Math.round(560 * ar), h = Math.round(w / ar);
+  const cap = g.caption ? fitWrap(String(g.caption), FT(), w - 40, 2, 38, 24, -0.02) : null;
+  const html = `<div class="glass gp e0 imgc"><img src="${esc(src)}" alt="" style="width:${w}px;height:${h}px" />${cap ? `<div class="imgc-c tx" style="font-size:${cap.size}px">${esc(g.caption)}</div>` : ""}</div>`;
+  c.css(`#${c.id} .imgc { padding: 14px; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+        #${c.id} .imgc img { display: block; object-fit: ${g.fit === "cover" ? "cover" : "contain"}; border-radius: 22px; background: rgba(0,0,0,.15); }
+        #${c.id} .imgc-c { font-weight: 650; text-align: center; padding: 0 14px 8px; }`);
+  c.js(`gtl.fromTo("#${c.id} .imgc img", { scale: 1.08, filter: "blur(8px)" }, { scale: 1, filter: "blur(0px)", duration: 0.6, ease: "power3.out" }, ${r3(c.s)});`);
+  return { html, w: w + 28, h: h + 28 + (cap ? cap.lines.length * cap.size * 1.2 + 14 : 0) };
 };
 
 // Gráfico copiado de una referencia: su HTML+CSS con los textos de este vídeo

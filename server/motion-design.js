@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanHtml, cleanCss } from "./gfx-template.js";
 import { icon, ICONS } from "./autoedit/render/icons.js";
+import { logoSvg } from "./brand-logos.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GSAP = join(HERE, "..", "node_modules", "gsap", "dist", "gsap.min.js");
@@ -17,7 +18,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 /** Limpia lo que devuelve Claude: HTML/CSS seguros, movimientos con propiedades conocidas, tiempos dentro de la escena. */
 export function normalizeMotion(m, dur) {
   if (!m || typeof m.html !== "string") return null;
-  let html = cleanHtml(m.html).replace(/\{\{\s*icon:([a-z-]+)\s*\}\}/g, (_, n) => icon(ICONS[n] ? n : "star"));
+  let html = cleanHtml(m.html).replace(/\{\{\s*icon:([a-z-]+)\s*\}\}/g, (_, n) => icon(ICONS[n] ? n : "star"))
+    .replace(/\{\{\s*logo:([^}]+?)\s*\}\}/g, (_, n) => logoSvg(n.trim(), { size: 64, brand: /color/i.test(n) }) || icon("star"));
   if (!/class\s*=\s*["'][^"']*\bm\b/.test(html)) html = `<div class="m">${html}</div>`;
   const val = (v) => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.length < 120 && !/[<>;{}]|url\(|expression|javascript/i.test(v));
   const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => PROPS.has(k) && val(v)));
@@ -69,7 +71,7 @@ Estilo de la marca (respétalo):
 ${style.notes ? `- Así es el estilo de sus referencias: ${style.notes}\n` : ""}${style.sampleCss ? `- Gráficos de sus referencias (mismo lenguaje visual: brillos, cristal, radios, grosores):\n${style.sampleCss}\n` : ""}
 Reglas técnicas (OBLIGATORIAS):
 - Todo dentro de <div class="m">…</div>. El CSS solo con selectores que empiecen por .m. Medidas SOLO en cqw/cqh/cqmin (la caja es el vídeo entero: 9:16, 4:5 o 16:9 → que quede bien en los tres; usa flex/grid y centra).
-- Sin JavaScript, sin <img>, sin url(). Iconos: {{icon:nombre}} con nombre de: ${Object.keys(ICONS).join(", ")}.
+- Sin JavaScript, sin <img>, sin url(). Iconos: {{icon:nombre}} con nombre de: ${Object.keys(ICONS).join(", ")}. Logos OFICIALES de marcas (más de 3.000, en SVG sin fondo): {{logo:Instagram}}, {{logo:Gmail}}, {{logo:Notion}}… (el nombre de la marca; dale tamaño con ".m svg.brand{width:..;height:..}"; blanco por defecto). Úsalos siempre que se nombre una marca o herramienta.
 - Fondo: un fondo propio y rico (degradados, luces, rejilla, grano con CSS) que tape el vídeo por completo.
 - La animación es una lista de movimientos (GSAP): {"sel":".m .titulo","from":{"opacity":0,"yPercent":60},"to":{"opacity":1,"yPercent":0},"at":0.2,"dur":0.6,"ease":"power3.out","stagger":0.08}. "at" en segundos desde que empieza la escena (0 a ${dur.toFixed(1)}). Propiedades: opacity, xPercent, yPercent (desplazamientos SIEMPRE en % del propio elemento, nunca px), scale, scaleX, scaleY, rotation, filter (blur/brightness), clipPath (inset(...) en %), color, backgroundColor. Selectores sencillos: ".m .clase" (sin :nth-child ni >). Usa "from" con el estado inicial (oculto) — el elemento se ve en su estado CSS al final.
 - Ritmo de editor: entrada con impacto en 0-0,4 s; CADA CAMBIO CAE EN SU PALABRA (usa los tiempos de arriba: el "at" de cada texto = cuando se dice, 0,05 s antes); un cambio por golpe de voz, separados 0,4-1,2 s; algo se mueve siempre (deriva lenta del fondo, la cámara empuja despacio), nada se queda quieto, todo legible al menos 1 s.

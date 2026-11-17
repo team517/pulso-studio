@@ -456,6 +456,13 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
       return st;
     })(),
   });
+  // Imágenes de tu Biblioteca: archivo y proporción
+  for (const g of input.graphics) {
+    if (g.type !== "image") continue;
+    const m = db.prepare("SELECT * FROM media WHERE id = ? AND kind = 'image'").get(String(g.media || ""));
+    if (m && existsSync(join(DIRS.media, m.file))) { g.file = join(DIRS.media, m.file); g.aspect = m.width && m.height ? m.width / m.height : 1.5; }
+    else g.type = "card"; // no está: tarjeta con el pie
+  }
   writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
   const out = await renderVariant(input, (f, label) => setItem(item.id, { progress: Math.min(0.8, 0.02 + f * 0.78), step: label || "Renderizando" }));
 
@@ -468,6 +475,12 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
     return { ...sfxFor(e.kind, count[e.kind] - 1), t: Math.max(0, +e.t.toFixed(3)) };
   });
   if (!sfx.some((e) => e.t < 0.1)) sfx.unshift({ ...sfxFor("hit", 0), t: 0, db: -18 });
+  // Tus sonidos de la Biblioteca que Claude ha colocado en su palabra
+  for (const so of plan.sounds || []) {
+    const m = db.prepare("SELECT * FROM media WHERE id = ? AND kind = 'audio'").get(so.media);
+    const w = words[Math.min(words.length - 1, Math.max(0, so.at | 0))];
+    if (m && w && existsSync(join(DIRS.media, m.file))) sfx.push({ file: join(DIRS.media, m.file), t: Math.max(0, +(w.start - 0.03).toFixed(3)), db: -18, max: Math.min(6, m.duration || 6) });
+  }
   const mixDir = join(dir, "mix");
   mkdirSync(mixDir, { recursive: true });
   link(join(work, "words.json"), join(mixDir, "words.json"));
