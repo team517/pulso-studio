@@ -1,7 +1,7 @@
 // Auto-edición: sube un vídeo hablado y salen 5 versiones editadas (o shorts de un vídeo largo),
 // cada una en cuanto está lista. Tú las revisas antes de publicar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronUp, Download, FlaskConical, Loader2, MessageSquareText, RotateCcw, Scissors, ShieldCheck, Sparkles, Terminal, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronUp, Download, Eraser, FlaskConical, Loader2, MessageSquareText, RotateCcw, Scissors, ShieldCheck, Sparkles, Terminal, Trash2, Upload, X } from "lucide-react";
 import { api, fmtSize, fmtTime, type Media } from "../api";
 import { autoApi, setPrefill, type AutoItem, type AutoJob, type AutoVariant } from "../autoedit-api";
 import { Field, Modal, navigate, useToast } from "../ui";
@@ -121,11 +121,16 @@ function ClaudeLoginNote({ worker, onReady }: { worker?: AutoInfo["worker"]; onR
 
 /* ---------- Soltar un vídeo y que empiece solo ---------- */
 
+const NOTES_KEY = "ps:aeNotes";
+const readNotes = () => { try { return localStorage.getItem(NOTES_KEY) || ""; } catch { return ""; } };
+
 function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: () => void }) {
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(0);
+  const [notes, setNotesRaw] = useState(readNotes);
+  const setNotes = (v: string) => { setNotesRaw(v); try { localStorage.setItem(NOTES_KEY, v); } catch { /* sin almacenamiento */ } };
   async function go(files: File[]) {
     const vids = files.filter((f) => f.type.startsWith("video/") || /.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
     if (!vids.length) return toast("Suelta un vídeo (MP4, MOV…).", "bad");
@@ -135,7 +140,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       let started = 0;
       for (const m of up.filter((x) => x.kind === "video")) {
         if (!m.has_audio) { toast(`«${m.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"); continue; }
-        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", allowRules: true });
+        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", notes });
         started++;
       }
       if (started) toast(started === 1 ? "Subido: ya se está editando. Las versiones irán apareciendo aquí." : `${started} vídeos subidos y editándose.`);
@@ -143,6 +148,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(0); }
   }
   return (
+    <div className="ae-dropwrap">
     <button type="button" className={"ae-drop" + (over ? " is-over" : "")} onClick={() => input.current?.click()} disabled={!!busy}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setOver(true); } }}
       onDragLeave={() => setOver(false)}
@@ -154,6 +160,12 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       </span>
       <input ref={input} type="file" hidden accept="video/*" multiple onChange={(e) => { go([...(e.target.files ?? [])]); e.target.value = ""; }} />
     </button>
+    <label className="ae-notes">
+      <span><MessageSquareText size={14} /> Indicaciones para la IA <small>(opcional: se aplican al próximo vídeo que sueltes)</small></span>
+      <textarea className="textarea" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
+        placeholder="Ej.: corte rápido, sin gráficos al principio, una animación a pantalla completa cuando explico los 3 pasos, la palabra clave en amarillo…" />
+    </label>
+    </div>
   );
 }
 
@@ -169,6 +181,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
   const [variants, setVariants] = useState(info.variants.map((v) => v.key));
   const [shorts, setShorts] = useState<number | "auto">("auto");
   const [vocab, setVocab] = useState("");
+  const [notes, setNotes] = useState(readNotes);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const { upload, busy: uploading } = useUploader((m) => { onMedia(m); const v = m.find((x) => x.kind === "video"); if (v) setMediaId(v.id); });
@@ -181,7 +194,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
     if (!mediaId) return toast("Elige o sube un vídeo.", "bad");
     setBusy(true);
     try {
-      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules });
+      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules, notes });
       onCreated();
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
   }
@@ -210,6 +223,11 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
             ))}
           </div>
         )}
+      </Field>
+
+      <Field label="Indicaciones para la IA (opcional)" hint="Cómo quieres este vídeo. Mandan sobre tu estilo general.">
+        <textarea className="textarea" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Ej.: más ritmo, nada de gráficos en los primeros 5 s, una animación a pantalla completa con los 3 pasos, termina con «Escríbeme INFO»…" />
       </Field>
 
       <Field label="Qué quieres">
@@ -317,6 +335,7 @@ function JobCard({ job, onChange }: { job: AutoJob; onChange: () => void }) {
 function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) {
   const toast = useToast();
   const [changes, setChanges] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
@@ -395,6 +414,7 @@ function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) 
               </>
             )}
             <button className="btn btn--sm" onClick={() => setChanges(true)} disabled={working}><MessageSquareText size={14} /> Pedir cambios</button>
+            <button className="btn btn--sm" onClick={() => setRemoving(true)} disabled={working}><Eraser size={14} /> Quitar cosas</button>
             {item.review !== "rejected" && <button className="btn btn--sm btn--ghost btn--danger" onClick={() => review("rejected")}>Descartar</button>}
             <a className="btn btn--sm btn--ghost btn--icon" href={item.video.url} download={`${item.video.name}.mp4`} title="Descargar"><Download size={14} /></a>
           </div>
@@ -403,6 +423,8 @@ function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) 
           <div className="ae-item__actions"><button className="btn btn--sm" onClick={async () => { await autoApi.retry(item.job_id); onChange(); }}><RotateCcw size={14} /> Volver a intentarlo</button></div>
         )}
       </div>
+
+      {removing && <RemoveElements item={item} onClose={() => setRemoving(false)} onDone={() => { setRemoving(false); onChange(); }} />}
 
       {changes && (
         <Modal title={`Cambios en «${item.label}»`} onClose={() => setChanges(false)}
@@ -419,5 +441,39 @@ function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) 
         </Modal>
       )}
     </article>
+  );
+}
+
+/** Quitar gráficos, animaciones, palabras o el titular de una versión y volver a editarla. */
+function RemoveElements({ item, onClose, onDone }: { item: AutoItem; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [list, setList] = useState<{ key: string; kind: string; label: string }[] | null>(null);
+  const [sel, setSel] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { autoApi.elements(item.id).then(setList).catch((e) => { setList([]); toast((e as Error).message, "bad"); }); }, [item.id, toast]);
+  async function go() {
+    setBusy(true);
+    try { await autoApi.removeElements(item.id, sel, notes); toast("Rehaciendo esta versión sin lo que has quitado"); onDone(); }
+    catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title={`Quitar cosas de «${item.label}»`} icon={<Eraser size={18} />} onClose={onClose}
+      foot={<><span className="spacer" /><button className="btn" onClick={onClose}>Cancelar</button>
+        <button className="btn btn--primary" disabled={busy || (!sel.length && notes.trim().length < 3)} onClick={go}>{busy ? <Loader2 size={15} className="spin" /> : <RotateCcw size={15} />} Volver a editar</button></>}>
+      {list === null ? <p className="muted"><Loader2 size={13} className="spin" /> Cargando…</p> : list.length === 0 ? <p className="muted">Esta versión no lleva gráficos ni animaciones que quitar: puedes pedir cambios abajo.</p> : (
+        <ul className="ae-rm">
+          {list.map((e) => (
+            <li key={e.key}><label>
+              <input type="checkbox" checked={sel.includes(e.key)} onChange={(x) => setSel((l) => (x.target.checked ? [...l, e.key] : l.filter((k) => k !== e.key)))} />
+              <span><b>{e.kind}</b>{e.label ? <small>{e.label}</small> : null}</span>
+            </label></li>
+          ))}
+        </ul>
+      )}
+      <Field label="Y además (opcional)" hint="Se lo dices a la IA y lo aplica al rehacer esta versión.">
+        <textarea className="textarea" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ej.: pon la animación más tarde, subtítulos más pequeños…" />
+      </Field>
+    </Modal>
   );
 }

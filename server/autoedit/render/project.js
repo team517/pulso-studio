@@ -155,14 +155,14 @@ function zoomScript(input, geo) {
   let cur = 1;
   if (zStyle !== "punch" && (!zs.length || zs[0].t >= 1.5)) { out.push(`tl.fromTo("#zoom", { scale: 1.06 }, { scale: 1, duration: 1.4, ease: "power3.out" }, 0);`); }
   zs.forEach((z, i) => {
-    if (zStyle === "punch" || z.ease === "cut") {
+    if (z.ease === "cut") {
       // salto seco (como un corte con reencuadre): duración 0, sin curva
       if (Math.abs(z.to - cur) < 0.001) return;
       out.push(`tl.fromTo("#zoom", { scale: ${r3(cur)} }, { scale: ${r3(z.to)}, duration: 0, ease: "none"${out.length ? ", immediateRender: false" : ""} }, ${r3(z.t)});`);
       cur = z.to;
       return;
     }
-    let dur = punchy ? Math.max(0.35, z.dur * 0.6) : z.dur;
+    let dur = punchy && z.ease !== "sine.inOut" ? Math.max(0.35, z.dur * 0.6) : z.dur;
     const next = zs[i + 1];
     if (next && z.t + dur > next.t) dur = Math.max(0.2, next.t - z.t);
     if (z.t + dur > D) dur = Math.max(0.1, D - z.t);

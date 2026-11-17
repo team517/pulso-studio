@@ -41,13 +41,13 @@ async function withClaude(label, fn) {
   throw new Error(`Claude no ha podido ${label} tras 3 intentos (${String(last?.message || last).slice(0, 200)}). Pulsa «Reintentar».`);
 }
 
-export async function decideCuts(words, { vocab = "", useClaude = true } = {}) {
+export async function decideCuts(words, { vocab = "", useClaude = true, notes = "" } = {}) {
   const { pauses, repeats } = findIssues(words);
   if (useClaude) {
     return withClaude("decidir los cortes", async () => {
       const prompt = `Eres editor de vídeo profesional de reels en español. Te paso la transcripción palabra a palabra de una toma hablada a cámara (índice, segundo, palabra; "(?)" = Whisper no está seguro).
 Decide qué QUITAR para que quede fluido: tomas falsas (cuando repite una frase, quédate con la ÚLTIMA buena), arranques fallidos, muletillas («eh», «em», «o sea» sueltos), tartamudeos y frases cortadas que luego repite. NO quites contenido con sentido y NUNCA quites negaciones («no», «sin», «ni», «nunca»…) ni palabras que cambien lo que se dice. Si dudas, no lo quites. Las pausas se quitan solas, no hace falta que las marques.
-Corrige también palabras que Whisper ha oído MAL (nombres, marcas, términos técnicos que no existen como «Codefemail» → «cold email»). NUNCA cambies cifras, años, fechas ni datos que suenan bien escritos: no corrijas lo que dice la persona, solo lo que Whisper transcribió mal.${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
+${notes ? `Indicaciones del usuario para este vídeo (respétalas): «${String(notes).slice(0, 800)}»\n` : ""}Corrige también palabras que Whisper ha oído MAL (nombres, marcas, términos técnicos que no existen como «Codefemail» → «cold email»). NUNCA cambies cifras, años, fechas ni datos que suenan bien escritos: no corrijas lo que dice la persona, solo lo que Whisper transcribió mal.${vocab ? `\nVocabulario del vídeo: ${vocab}` : ""}
 
 Pausas largas detectadas (después de la palabra): ${JSON.stringify(pauses.slice(0, 200))}
 Repeticiones detectadas: ${JSON.stringify(repeats.slice(0, 100))}
@@ -332,18 +332,26 @@ export function renderInputFor(variant, plan, words, { workDir, base, duration, 
   const zMax = Math.min(1.25, Math.max(1, Number(style?.motion?.zoomMax) || 1.1));
   let zooms;
   if (zs === "none") zooms = [];
-  else if (zs === "punch") {
-    // Zoom de golpe al empezar frases (como un corte de cámara): alterna plano normal y cerrado, nunca dos seguidos en < 2,5 s
+  else {
+    // Cámara de editor (como tu referencia), nunca cortes: dentro de cada frase un empuje lento; al cambiar de
+    // idea, transición suave a otro encuadre (abierto, medio o cerrado), sin repetir el mismo dos veces seguidas.
     zooms = [];
-    let last = -9, close = false;
-    plan.phrases.forEach((ph) => {
-      const t = T(ph.chunks[0][0]);
-      if (t - last < 2.5 || t < 0.5) return;
-      close = !close;
-      zooms.push({ t: +t.toFixed(3), to: +(close ? zMax : 1).toFixed(3), dur: 0, ease: "cut" });
-      last = t;
+    const top = Math.min(1.15, zMax), push = Math.min(0.035, (top - 1) * 0.35);
+    const levels = [1, 1 + (top - 1) * 0.5, top - push];
+    const order = [0, 2, 1, 2, 0, 1];
+    let cur = 1;
+    plan.phrases.forEach((ph, i) => {
+      const last = ph.chunks[ph.chunks.length - 1];
+      const a = T(ph.chunks[0][0]), b = E(last[1]);
+      if (b - a < 0.6) return;
+      const base = levels[order[i % order.length]];
+      const tr = i === 0 ? 0 : Math.min(0.6, Math.max(0.3, (b - a) * 0.25));
+      if (Math.abs(base - cur) > 0.005) zooms.push({ t: +Math.max(0, a - tr * 0.4).toFixed(3), to: +base.toFixed(3), dur: +Math.max(0.25, tr).toFixed(3), ease: "power2.inOut" });
+      const s0 = a + tr * 0.6, d = b - s0;
+      if (d > 0.8) { zooms.push({ t: +s0.toFixed(3), to: +(base + push).toFixed(3), dur: +d.toFixed(3), ease: "sine.inOut" }); cur = base + push; }
+      else cur = base;
     });
-  } else zooms = plan.zooms.map((z) => ({ t: +T(z.at).toFixed(3), to: +Math.min(zMax, 1 + (z.to - 1) * zoomK).toFixed(3), dur: z.dur, ease: "power2.inOut" }));
+  }
   return {
     workDir, layout: variant.layout, width: variant.width, height: variant.height, fps: 30, duration,
     base, words: words.map((w) => ({ w: w.w, s: w.start, e: w.end })),

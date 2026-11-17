@@ -59,12 +59,12 @@ const link = (from, to) => { if (existsSync(to)) return; try { linkSync(from, to
 
 /* ---------- Crear trabajos ---------- */
 
-export function createJob(mediaId, { kind = "variants", shorts = 3, variants = VARIANTS.map((v) => v.key), vocab = "", allowRules = false, name } = {}) {
+export function createJob(mediaId, { kind = "variants", shorts = 3, variants = VARIANTS.map((v) => v.key), vocab = "", allowRules = false, name, notes = "" } = {}) {
   const m = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaId);
   if (!m) throw Object.assign(new Error("No encuentro ese vídeo en la biblioteca."), { status: 404 });
   if (m.kind !== "video") throw Object.assign(new Error("Elige un vídeo (no un audio ni una imagen)."), { status: 400 });
   const id = uid();
-  const opts = { shorts: shorts === "auto" || shorts === 0 ? "auto" : Math.min(25, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules };
+  const opts = { shorts: shorts === "auto" || shorts === 0 ? "auto" : Math.min(25, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules, notes: String(notes || "").slice(0, 2000) };
   if (kind === "variants" && !opts.variants.length) throw Object.assign(new Error("Elige al menos una versión."), { status: 400 });
   db.prepare(`INSERT INTO autoedit_jobs (id, media_id, kind, name, status, step, options, created_at, updated_at)
     VALUES (?, ?, ?, ?, 'queued', 'En cola', ?, ?, ?)`).run(id, m.id, kind, String(name || m.name).slice(0, 120), JSON.stringify(opts), now(), now());
@@ -120,6 +120,11 @@ async function prepareSource(job, work) {
  * ¿El vídeo ya trae textos quemados (subtítulos de otra edición, rótulos)? Claude mira 6 fotogramas; si los hay,
  * esa franja se difumina para que no choque con los subtítulos nuevos, y se avisa.
  */
+/** Lo que el usuario pidió para ESTE vídeo manda sobre el estilo general. */
+const withUserNotes = (styleNotes, notes) => (notes && String(notes).trim()
+  ? `${styleNotes}\nINDICACIONES DEL USUARIO PARA ESTE VÍDEO (mandan sobre todo lo demás, cúmplelas al pie de la letra): «${String(notes).trim()}»`
+  : styleNotes);
+
 /** Animaciones a pantalla completa del plan: Claude las diseña (y revisa con fotos) una vez por trabajo. */
 async function designMotions(job, plan, words, work, persist = true) {
   const todo = (plan.graphics || []).filter((g) => g.type === "motion" && !g.design);
@@ -137,7 +142,7 @@ async function designMotions(job, plan, words, work, persist = true) {
       g.design = await designMotion({
         brief: String(g.brief || "").slice(0, 400), texts: (Array.isArray(g.texts) ? g.texts : []).map(String).slice(0, 6), dur,
         words: words.slice(from, to + 1).map((w) => w.w).join(" "),
-        style: { ...theme, notes: String(st.aiNotes || "").slice(0, 600), sampleCss },
+        style: { ...theme, notes: [String(st.aiNotes || "").slice(0, 600), job.options?.notes ? `El cliente pide: ${String(job.options.notes).slice(0, 400)}` : ""].filter(Boolean).join(" · "), sampleCss },
         vars: { fTitle: '"Inter", "Segoe UI", sans-serif', fKeyword: '"Anton", "Impact", sans-serif', ...theme },
         dir: join(work, "motion", String(k + 1)), askClaude, chromePath: chromePath(),
       });
@@ -212,7 +217,7 @@ async function cutTake(job, work, rawWords, { ranges = null, useClaude } = {}) {
     for (const [a, b] of ranges) for (let i = a; i <= b; i++) keepIdx.add(i);
     words = rawWords.filter((_, i) => keepIdx.has(i));
   }
-  const cuts = await decideCuts(words, { vocab: job.options?.vocab, useClaude });
+  const cuts = await decideCuts(words, { vocab: job.options?.vocab, useClaude, notes: job.options?.notes });
   const { energy } = await analyzeAudio(join(work, "audio48k.wav"));
   // Los cortes de Claude son índices de `words`; para un short, además se corta entre tramos
   let segs = keepSegments(words, cuts.drop, energy, info.duration);
@@ -451,7 +456,7 @@ export async function runJob(id) {
   let plan = job.plan;
   if (!plan) {
     setJob(id, { step: "Claude está planificando la edición", progress: 0.26 });
-    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: styleNotesForAI() });
+    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: withUserNotes(styleNotesForAI(), opts.notes) });
     setJob(id, { plan, brain: plan.brain });
   }
   plan = await designMotions(job, plan, words.words, src);
@@ -527,7 +532,7 @@ async function runShorts(job, { src, raw, info, useClaude }) {
       let plan = it.post?.plan;
       if (!plan) {
         setItem(it.id, { step: "Planificando la edición", progress: 0.05 });
-        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: styleNotesForAI(), angle: it.short.angle, hook: it.short.hook });
+        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: withUserNotes(styleNotesForAI(), job.options?.notes), angle: it.short.angle, hook: it.short.hook });
         setItem(it.id, { post: { plan } });
       }
       if (plan.graphics?.some((g) => g.type === "motion" && !g.design)) {
@@ -576,6 +581,43 @@ Aplica los cambios como reglas para todo el vídeo (no solo en un momento). Devu
   const plan = validatePlan(r, words);
   if (!plan) throw new Error("Claude no devolvió un plan válido. Prueba a explicar el cambio de otra forma.");
   setItem(it.id, { notes: String(notes).slice(0, 1500), post: { ...(it.post || {}), plan }, status: "queued", step: "En cola para rehacer", progress: 0, review: "pending", error: null });
+  kick();
+}
+
+/** Elementos de una versión (para quitarlos): gráficos, animaciones, palabras detrás y titular. */
+export function itemElements(itemId) {
+  const it = row(db.prepare("SELECT * FROM autoedit_items WHERE id = ?").get(itemId));
+  if (!it) throw Object.assign(new Error("No encuentro esa versión."), { status: 404 });
+  const job = row(db.prepare("SELECT * FROM autoedit_jobs WHERE id = ?").get(it.job_id));
+  const plan = it.post?.plan || job.plan;
+  if (!plan?.phrases) return [];
+  const KIND = { motion: "Animación a pantalla completa", scene: "Pantalla completa", card: "Tarjeta", checklist: "Lista", strike: "Lista tachada", stat: "Cifra", days: "Días", compare: "Comparación", chart: "Gráfica", icons: "Iconos", custom: "Gráfico de tu estilo" };
+  const text = (g) => g.design?.note || g.brief || g.title || g.label || g.value || g.final || (g.fields && Object.values(g.fields).join(" · ")) || (g.items || g.steps || []).map((x) => x.text || x.label).join(" · ") || "";
+  const out = [];
+  plan.graphics.forEach((g, i) => { if (!g.layouts || g.layouts.includes(it.layout) || g.type === "motion") out.push({ key: `g${i}`, kind: KIND[g.type] || g.type, label: String(text(g)).slice(0, 140) }); });
+  (plan.behind || []).forEach((b, i) => { if (it.layout === "reference") out.push({ key: `b${i}`, kind: "Palabra detrás de la cabeza", label: b.text }); });
+  if (plan.hook && ["headline", "horizontal", "framed"].includes(it.layout)) out.push({ key: "hook", kind: "Titular", label: plan.hook.title });
+  return out;
+}
+
+/** Quita esos elementos de la versión y la vuelve a editar (sin tocar las demás). */
+export function removeElements(itemId, keys, notes = "") {
+  const it = row(db.prepare("SELECT * FROM autoedit_items WHERE id = ?").get(itemId));
+  if (!it) throw Object.assign(new Error("No encuentro esa versión."), { status: 404 });
+  const job = row(db.prepare("SELECT * FROM autoedit_jobs WHERE id = ?").get(it.job_id));
+  const base = it.post?.plan || job.plan;
+  if (!base?.phrases) throw Object.assign(new Error("Esta versión todavía no tiene plan."), { status: 400 });
+  const drop = new Set((Array.isArray(keys) ? keys : []).map(String));
+  const plan = {
+    ...base,
+    graphics: base.graphics.filter((_, i) => !drop.has(`g${i}`)),
+    behind: (base.behind || []).filter((_, i) => !drop.has(`b${i}`)),
+    hook: drop.has("hook") ? null : base.hook,
+  };
+  const what = `Quitado: ${[...drop].length} elemento(s).${notes ? " " + String(notes).slice(0, 800) : ""}`;
+  // Con indicaciones nuevas, Claude rehace el plan de esta versión (requestChanges); si solo se quita, se rehace directo
+  setItem(it.id, { notes: what, post: { ...(it.post || {}), plan, ...(notes && IS_SERVER ? { changeRequest: String(notes).slice(0, 1500) } : {}) }, status: "queued", step: IS_SERVER ? "En cola para rehacer en tu PC" : "En cola para rehacer", progress: 0, review: "pending", error: null });
+  if (!["queued", "running"].includes(job.status)) setJob(job.id, { status: "queued", step: "En cola", error: null });
   kick();
 }
 

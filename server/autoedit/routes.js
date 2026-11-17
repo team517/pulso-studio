@@ -1,5 +1,5 @@
 // Rutas de la auto-edición.
-import { createJob, jobView, listJobs, editedLibrary, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick } from "./pipeline.js";
+import { createJob, jobView, listJobs, editedLibrary, requestChanges, setReview, retryJob, allowRulesAndRetry, deleteJob, VARIANTS, kick, itemElements, removeElements } from "./pipeline.js";
 import { aiProvider, resetClaudeCheck } from "./brain.js";
 import { IS_SERVER } from "../config.js";
 import { PERSISTENT } from "../db.js";
@@ -33,6 +33,11 @@ export function registerAutoeditRoutes(app, wrap) {
   app.post("/api/autoedit/jobs/:id/use-rules", wrap((req, res) => { allowRulesAndRetry(req.params.id); res.json(jobView(req.params.id)); }));
   app.delete("/api/autoedit/jobs/:id", wrap((req, res) => { deleteJob(req.params.id); res.json({ ok: true }); }));
   app.post("/api/autoedit/items/:id/review", wrap((req, res) => { setReview(req.params.id, String(req.body.review)); res.json({ ok: true }); }));
+  app.get("/api/autoedit/items/:id/elements", wrap((req, res) => res.json(itemElements(req.params.id))));
+  app.post("/api/autoedit/items/:id/remove", wrap(async (req, res) => {
+    removeElements(req.params.id, req.body?.keys || [], String(req.body?.notes || ""));
+    res.json({ ok: true });
+  }));
   app.post("/api/autoedit/items/:id/changes", wrap(async (req, res) => {
     await requestChanges(req.params.id, String(req.body.notes || ""));
     res.json({ ok: true });
