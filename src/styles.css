@@ -312,3 +312,16 @@ a { color: var(--accent-2); text-decoration: none; }
 .ae-rm label:hover { border-color: var(--ink-3); }
 .ae-rm span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .ae-rm small { color: var(--ink-3); }
+
+/* Vídeo de referencia: portadas */
+.ae-refs { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 8px; }
+.ae-ref { flex: none; width: 104px; display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none; cursor: pointer; text-align: left; color: var(--ink-2); }
+.ae-ref__img { position: relative; width: 104px; height: 150px; border-radius: 12px; overflow: hidden; background: #0b0c10 center/cover; border: 2px solid var(--line); display: grid; place-items: center; color: var(--ink-3); transition: border-color .15s, transform .15s; }
+.ae-ref__img video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ae-ref:hover .ae-ref__img { border-color: var(--ink-3); transform: translateY(-1px); }
+.ae-ref.is-on .ae-ref__img { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ae-ref__ok { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; z-index: 1; }
+.ae-ref__name { font-size: 11.5px; line-height: 1.25; display: flex; flex-direction: column; overflow: hidden; }
+.ae-ref__name { white-space: nowrap; text-overflow: ellipsis; }
+.ae-ref__name small { color: var(--ink-3); font-size: 10.5px; }
+.ae-ref--none .ae-ref__img { border-style: dashed; }

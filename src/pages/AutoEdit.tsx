@@ -127,20 +127,36 @@ type RefChoice = { media?: string | null; asset?: string | null } | null;
 
 /** Elegir un vídeo de referencia para ESTE vídeo: de la Biblioteca o de tus referencias del Estilo. */
 function RefPicker({ value, onChange }: { value: RefChoice; onChange: (v: RefChoice) => void }) {
-  const [opts, setOpts] = useState<{ key: string; label: string; v: RefChoice }[]>([]);
+  type Opt = { key: string; label: string; group: string; thumb: string | null; video: string | null; v: RefChoice };
+  const [opts, setOpts] = useState<Opt[] | null>(null);
   useEffect(() => {
     Promise.all([api.media().catch(() => [] as Media[]), styleApi.get().catch(() => null)]).then(([media, st]) => {
-      const vids = media.filter((m) => m.kind === "video").map((m) => ({ key: "m:" + m.id, label: `Biblioteca · ${m.name}`, v: { media: m.id } }));
-      const refs = (st?.assets || []).filter((a) => a.kind === "reference" && /\.(mp4|mov|m4v|webm)$/i.test(a.file)).map((a) => ({ key: "a:" + a.id, label: `Referencia · ${a.name}`, v: { asset: a.id } }));
+      const refs: Opt[] = (st?.assets || []).filter((a) => a.kind === "reference" && /\.(mp4|mov|m4v|webm)$/i.test(a.file))
+        .map((a) => ({ key: "a:" + a.id, label: a.name, group: "Referencia", thumb: null, video: a.url, v: { asset: a.id } }));
+      const vids: Opt[] = media.filter((m) => m.kind === "video")
+        .map((m) => ({ key: "m:" + m.id, label: m.name, group: "Biblioteca", thumb: m.thumbUrl, video: m.thumbUrl ? null : m.url, v: { media: m.id } }));
       setOpts([...refs, ...vids]);
     });
   }, []);
   const cur = value?.media ? "m:" + value.media : value?.asset ? "a:" + value.asset : "";
+  if (opts === null) return <p className="muted" style={{ margin: 0, fontSize: 12.5 }}><Loader2 size={12} className="spin" /> Cargando tus vídeos…</p>;
   return (
-    <select className="select" value={cur} onChange={(e) => onChange(opts.find((o) => o.key === e.target.value)?.v ?? null)}>
-      <option value="">Sin vídeo de referencia (usa mi estilo)</option>
-      {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-    </select>
+    <div className="ae-refs">
+      <button type="button" className={"ae-ref ae-ref--none" + (cur === "" ? " is-on" : "")} onClick={() => onChange(null)}>
+        <span className="ae-ref__img"><X size={20} /></span>
+        <span className="ae-ref__name">Sin referencia<small>usa mi estilo</small></span>
+      </button>
+      {opts.map((o) => (
+        <button key={o.key} type="button" className={"ae-ref" + (cur === o.key ? " is-on" : "")} title={o.label} onClick={() => onChange(cur === o.key ? null : o.v)}>
+          <span className="ae-ref__img" style={o.thumb ? { backgroundImage: `url(${o.thumb})` } : undefined}>
+            {!o.thumb && o.video && <video src={o.video + "#t=1"} muted playsInline preload="metadata"
+              onMouseEnter={(e) => e.currentTarget.play().catch(() => {})} onMouseLeave={(e) => { e.currentTarget.pause(); }} />}
+            {cur === o.key && <span className="ae-ref__ok"><Check size={14} /></span>}
+          </span>
+          <span className="ae-ref__name">{o.label}<small>{o.group}</small></span>
+        </button>
+      ))}
+    </div>
   );
 }
 const readNotes = () => { try { return localStorage.getItem(NOTES_KEY) || ""; } catch { return ""; } };
