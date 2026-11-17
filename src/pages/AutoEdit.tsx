@@ -1,9 +1,10 @@
 // Auto-edición: sube un vídeo hablado y salen 5 versiones editadas (o shorts de un vídeo largo),
 // cada una en cuanto está lista. Tú las revisas antes de publicar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronUp, Download, Eraser, FlaskConical, Loader2, MessageSquareText, RotateCcw, Scissors, ShieldCheck, Sparkles, Terminal, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronUp, Download, Eraser, Film, FlaskConical, Loader2, MessageSquareText, RotateCcw, Scissors, ShieldCheck, Sparkles, Terminal, Trash2, Upload, X } from "lucide-react";
 import { api, fmtSize, fmtTime, type Media } from "../api";
 import { autoApi, setPrefill, type AutoItem, type AutoJob, type AutoVariant } from "../autoedit-api";
+import { styleApi } from "../style-api";
 import { Field, Modal, navigate, useToast } from "../ui";
 import { ACCEPT, useUploader } from "../editor/MediaPanel";
 import "./autoedit.css";
@@ -122,6 +123,26 @@ function ClaudeLoginNote({ worker, onReady }: { worker?: AutoInfo["worker"]; onR
 /* ---------- Soltar un vídeo y que empiece solo ---------- */
 
 const NOTES_KEY = "ps:aeNotes";
+type RefChoice = { media?: string | null; asset?: string | null } | null;
+
+/** Elegir un vídeo de referencia para ESTE vídeo: de la Biblioteca o de tus referencias del Estilo. */
+function RefPicker({ value, onChange }: { value: RefChoice; onChange: (v: RefChoice) => void }) {
+  const [opts, setOpts] = useState<{ key: string; label: string; v: RefChoice }[]>([]);
+  useEffect(() => {
+    Promise.all([api.media().catch(() => [] as Media[]), styleApi.get().catch(() => null)]).then(([media, st]) => {
+      const vids = media.filter((m) => m.kind === "video").map((m) => ({ key: "m:" + m.id, label: `Biblioteca · ${m.name}`, v: { media: m.id } }));
+      const refs = (st?.assets || []).filter((a) => a.kind === "reference" && /\.(mp4|mov|m4v|webm)$/i.test(a.file)).map((a) => ({ key: "a:" + a.id, label: `Referencia · ${a.name}`, v: { asset: a.id } }));
+      setOpts([...refs, ...vids]);
+    });
+  }, []);
+  const cur = value?.media ? "m:" + value.media : value?.asset ? "a:" + value.asset : "";
+  return (
+    <select className="select" value={cur} onChange={(e) => onChange(opts.find((o) => o.key === e.target.value)?.v ?? null)}>
+      <option value="">Sin vídeo de referencia (usa mi estilo)</option>
+      {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+    </select>
+  );
+}
 const readNotes = () => { try { return localStorage.getItem(NOTES_KEY) || ""; } catch { return ""; } };
 
 function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: () => void }) {
@@ -130,6 +151,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(0);
   const [notes, setNotesRaw] = useState(readNotes);
+  const [ref, setRef] = useState<RefChoice>(null);
   const setNotes = (v: string) => { setNotesRaw(v); try { localStorage.setItem(NOTES_KEY, v); } catch { /* sin almacenamiento */ } };
   async function go(files: File[]) {
     const vids = files.filter((f) => f.type.startsWith("video/") || /.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
@@ -140,7 +162,7 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       let started = 0;
       for (const m of up.filter((x) => x.kind === "video")) {
         if (!m.has_audio) { toast(`«${m.name}» no tiene sonido: la auto-edición necesita que hables.`, "bad"); continue; }
-        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", notes });
+        await autoApi.create({ mediaId: m.id, kind: m.duration > 150 ? "shorts" : "variants", variants, shorts: "auto", notes, ref });
         started++;
       }
       if (started) toast(started === 1 ? "Subido: ya se está editando. Las versiones irán apareciendo aquí." : `${started} vídeos subidos y editándose.`);
@@ -165,6 +187,10 @@ function DropToEdit({ variants, onStarted }: { variants: string[]; onStarted: ()
       <textarea className="textarea" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
         placeholder="Ej.: corte rápido, sin gráficos al principio, una animación a pantalla completa cuando explico los 3 pasos, la palabra clave en amarillo…" />
     </label>
+    <label className="ae-notes">
+      <span><Film size={14} /> Vídeo de referencia <small>(opcional: lo edita como ese vídeo, con sus mismos colores — LUT medida)</small></span>
+      <RefPicker value={ref} onChange={setRef} />
+    </label>
     </div>
   );
 }
@@ -182,6 +208,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
   const [shorts, setShorts] = useState<number | "auto">("auto");
   const [vocab, setVocab] = useState("");
   const [notes, setNotes] = useState(readNotes);
+  const [ref, setRef] = useState<RefChoice>(null);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const { upload, busy: uploading } = useUploader((m) => { onMedia(m); const v = m.find((x) => x.kind === "video"); if (v) setMediaId(v.id); });
@@ -194,7 +221,7 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
     if (!mediaId) return toast("Elige o sube un vídeo.", "bad");
     setBusy(true);
     try {
-      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules, notes });
+      await autoApi.create({ mediaId, kind, variants, shorts, vocab, allowRules, notes, ref });
       onCreated();
     } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
   }
@@ -228,6 +255,10 @@ function NewJob({ info, media, onMedia, onClose, onCreated }: {
       <Field label="Indicaciones para la IA (opcional)" hint="Cómo quieres este vídeo. Mandan sobre tu estilo general.">
         <textarea className="textarea" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
           placeholder="Ej.: más ritmo, nada de gráficos en los primeros 5 s, una animación a pantalla completa con los 3 pasos, termina con «Escríbeme INFO»…" />
+      </Field>
+
+      <Field label="Vídeo de referencia (opcional)" hint="Lo edita como ese vídeo: mismo ritmo, subtítulos, gráficos y los mismos colores (LUT medida).">
+        <RefPicker value={ref} onChange={setRef} />
       </Field>
 
       <Field label="Qué quieres">

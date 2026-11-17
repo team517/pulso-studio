@@ -34,7 +34,7 @@ export const autoApi = {
   info: () => req<{ claude: boolean; provider: "claude" | "deepseek" | null; variants: AutoVariant[]; worker?: { online: boolean; claude: boolean; lastSeen: number | null; busy: string | null } | null }>("GET", "/api/autoedit/info"),
   jobs: () => req<AutoJob[]>("GET", "/api/autoedit/jobs"),
   job: (id: string) => req<AutoJob>("GET", `/api/autoedit/jobs/${id}`),
-  create: (b: { mediaId: string; kind: "variants" | "shorts"; variants?: string[]; shorts?: number | "auto"; vocab?: string; allowRules?: boolean; notes?: string }) => req<AutoJob>("POST", "/api/autoedit/jobs", b),
+  create: (b: { mediaId: string; kind: "variants" | "shorts"; variants?: string[]; shorts?: number | "auto"; vocab?: string; allowRules?: boolean; notes?: string; ref?: { media?: string | null; asset?: string | null } | null }) => req<AutoJob>("POST", "/api/autoedit/jobs", b),
   elements: (itemId: string) => req<{ key: string; kind: string; label: string }[]>("GET", `/api/autoedit/items/${itemId}/elements`),
   removeElements: (itemId: string, keys: string[], notes = "") => req("POST", `/api/autoedit/items/${itemId}/remove`, { keys, notes }),
   recheck: () => req<{ provider: "claude" | "deepseek" | null }>("POST", "/api/autoedit/recheck"),

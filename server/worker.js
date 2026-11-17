@@ -326,6 +326,8 @@ async function doJob({ job, items, media }) {
   log(busy);
   await ensureMedia(media);
   await syncStyle();
+  const refId = job.options?.ref?.media;
+  if (refId) { try { await ensureMedia(await call("GET", `/api/media/${refId}`)); } catch (e) { log("No se pudo bajar el vídeo de referencia:", e.message); } }
   mirrorJob(job, items);
 
   // Cambios pedidos desde el panel: Claude rehace el plan de esa versión

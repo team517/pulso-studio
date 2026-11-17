@@ -12,7 +12,7 @@ import { ffStderr } from "./analysis.js";
 import { analyzeAudio, keepSegments } from "./analysis.js";
 void claudeReady;
 import { VARIANTS, decideCuts, makePlan, renderInputFor, pickShorts, validatePlan } from "./plan.js";
-import { toRenderStyle, styleNotesForAI, getStyle } from "../style.js";
+import { toRenderStyle, styleNotesForAI, getStyle, STYLE_DIR } from "../style.js";
 import { MODE, IS_SERVER } from "../config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -59,12 +59,12 @@ const link = (from, to) => { if (existsSync(to)) return; try { linkSync(from, to
 
 /* ---------- Crear trabajos ---------- */
 
-export function createJob(mediaId, { kind = "variants", shorts = 3, variants = VARIANTS.map((v) => v.key), vocab = "", allowRules = false, name, notes = "" } = {}) {
+export function createJob(mediaId, { kind = "variants", shorts = 3, variants = VARIANTS.map((v) => v.key), vocab = "", allowRules = false, name, notes = "", ref = null } = {}) {
   const m = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaId);
   if (!m) throw Object.assign(new Error("No encuentro ese vídeo en la biblioteca."), { status: 404 });
   if (m.kind !== "video") throw Object.assign(new Error("Elige un vídeo (no un audio ni una imagen)."), { status: 400 });
   const id = uid();
-  const opts = { shorts: shorts === "auto" || shorts === 0 ? "auto" : Math.min(25, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules, notes: String(notes || "").slice(0, 2000) };
+  const opts = { shorts: shorts === "auto" || shorts === 0 ? "auto" : Math.min(25, Math.max(1, shorts | 0)), variants: variants.filter((k) => VARIANTS.some((v) => v.key === k)), vocab: String(vocab).slice(0, 400), allowRules: !!allowRules, notes: String(notes || "").slice(0, 2000), ref: ref && (ref.media || ref.asset) ? { media: ref.media ? String(ref.media) : null, asset: ref.asset ? String(ref.asset) : null } : null };
   if (kind === "variants" && !opts.variants.length) throw Object.assign(new Error("Elige al menos una versión."), { status: 400 });
   db.prepare(`INSERT INTO autoedit_jobs (id, media_id, kind, name, status, step, options, created_at, updated_at)
     VALUES (?, ?, ?, ?, 'queued', 'En cola', ?, ?, ?)`).run(id, m.id, kind, String(name || m.name).slice(0, 120), JSON.stringify(opts), now(), now());
@@ -120,6 +120,48 @@ async function prepareSource(job, work) {
  * ¿El vídeo ya trae textos quemados (subtítulos de otra edición, rótulos)? Claude mira 6 fotogramas; si los hay,
  * esa franja se difumina para que no choque con los subtítulos nuevos, y se avisa.
  */
+/**
+ * Vídeo de referencia de ESTE trabajo: se iguala el color (LUT medida) y Claude mira cómo está editado
+ * (ritmo, subtítulos, gráficos, zooms) para copiarlo. Se hace una vez; devuelve { lut, notes }.
+ */
+async function prepareReference(job, work) {
+  const ref = job.options?.ref;
+  if (!ref) return null;
+  const done = join(work, "referencia.json");
+  if (existsSync(done)) return readJson(done);
+  let file = null;
+  if (ref.media) { const m = db.prepare("SELECT file FROM media WHERE id = ?").get(ref.media); if (m) file = join(DIRS.media, m.file); }
+  if (!file && ref.asset) { const a = db.prepare("SELECT file FROM style_assets WHERE id = ?").get(ref.asset); if (a) file = join(STYLE_DIR, a.file); }
+  if (!file || !existsSync(file)) { console.warn("[autoedit] no está el vídeo de referencia"); return null; }
+  const out = { lut: null, notes: "" };
+  setJob(job.id, { step: "Igualando el color a tu vídeo de referencia" });
+  try {
+    await py("color_match.py", ["--src", join(work, "vertical.mp4"), "--ref", file, "--out", join(work, "color.cube")]);
+    out.lut = join(work, "color.cube");
+  } catch (e) { console.warn("[autoedit] color de referencia:", String(e.message).slice(-300)); }
+  if (await canSeeImages().catch(() => false)) {
+    setJob(job.id, { step: "Claude estudia cómo está editado tu vídeo de referencia" });
+    const dir = join(work, "referencia");
+    mkdirSync(dir, { recursive: true });
+    const frames = [];
+    for (let i = 0; i < 8; i++) {
+      const f = join(dir, `r${i + 1}.jpg`);
+      await run("ffmpeg", ["-v", "error", "-y", "-ss", String(1 + i * 3.5), "-i", file, "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", f]).catch(() => {});
+      if (existsSync(f)) frames.push(f);
+    }
+    if (frames.length) {
+      try {
+        const r = await askClaude(`Estos ${frames.length} fotogramas son de un reel de REFERENCIA (léelos con Read): ${frames.join(", ")}
+El cliente quiere su vídeo editado EXACTAMENTE así. Describe en 6-10 reglas concretas y accionables cómo está editado: subtítulos (letra, tamaño, color, posición, palabras a la vez), gráficos (cuántos, cómo son, a pantalla completa o no), zooms y encuadres, ritmo de cortes, color y ambiente, transiciones.
+Responde SOLO JSON: {"rules":["...","..."]}`, { images: frames, dir, timeoutMs: 5 * 60e3, maxTurns: frames.length + 4 });
+        out.notes = (Array.isArray(r.rules) ? r.rules : []).map(String).slice(0, 12).join(" · ");
+      } catch (e) { if (e instanceof NeedLogin) throw e; console.warn("[autoedit] notas de referencia:", e.message); }
+    }
+  }
+  writeFileSync(done, JSON.stringify(out));
+  return out;
+}
+
 /** Lo que el usuario pidió para ESTE vídeo manda sobre el estilo general. */
 const withUserNotes = (styleNotes, notes) => (notes && String(notes).trim()
   ? `${styleNotes}\nINDICACIONES DEL USUARIO PARA ESTE VÍDEO (mandan sobre todo lo demás, cúmplelas al pie de la letra): «${String(notes).trim()}»`
@@ -269,7 +311,7 @@ export function lookFor(k) {
 async function buildBase(work, look) {
   const out = join(work, "base.mp4");
   // Si cambia el plano o el color (otro estilo), se rehace
-  const sig = join(work, "base.json"), want = JSON.stringify({ framing: look.framing, grade: look.grade });
+  const sig = join(work, "base.json"), want = JSON.stringify({ framing: look.framing, grade: look.grade, lut: look.lut || null });
   if (existsSync(out) && existsSync(sig) && readFileSync(sig, "utf8") === want) return out;
   rmSync(out, { force: true });
   writeFileSync(sig, want);
@@ -277,6 +319,8 @@ async function buildBase(work, look) {
   const vf = [];
   // Recorte hacia arriba (la cara suele estar en el tercio superior), luego vuelta a 1080×1920
   if (z > 1) vf.push(`crop=iw/${z}:ih/${z}:(iw-iw/${z})/2:(ih-ih/${z})*0.28`, "scale=1080:1920:flags=lanczos");
+  // Color de tu vídeo de referencia (LUT medida) y, encima, el color del estilo
+  if (look.lut && existsSync(look.lut)) vf.push(`lut3d=file='${look.lut.replace(/\\/g, "/").replace(/:/g, "\\:")}'`);
   if (GRADES[look.grade]?.vf) vf.push(GRADES[look.grade].vf);
   if (!vf.length) { link(join(work, "cut.mp4"), out); return out; }
   await run("ffmpeg", ["-v", "error", "-y", "-i", join(work, "cut.mp4"), "-vf", vf.join(","), "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
@@ -475,17 +519,19 @@ export async function runJob(id) {
 
   // 5 versiones del mismo vídeo
   const words = await cutTake(job, src, raw, { useClaude });
+  const refInfo = await prepareReference(job, src);
+  const userNotes = [opts.notes, refInfo?.notes ? `Edítalo como su vídeo de referencia: ${refInfo.notes}` : ""].filter(Boolean).join("\n");
   let plan = job.plan;
   if (!plan) {
     setJob(id, { step: "Claude está planificando la edición", progress: 0.26 });
-    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: withUserNotes(styleNotesForAI(), opts.notes) });
+    plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: opts.vocab, useClaude, styleNotes: withUserNotes(styleNotesForAI(), userNotes) });
     setJob(id, { plan, brain: plan.brain });
   }
   plan = await designMotions(job, plan, words.words, src);
   const variants = VARIANTS.filter((v) => opts.variants.includes(v.key));
   // Color del estilo (p. ej. cine) también en las versiones
   const grade = getStyle().grade;
-  if (grade && grade !== "neutral") await buildBase(src, { framing: "wide", grade });
+  if ((grade && grade !== "neutral") || refInfo?.lut) await buildBase(src, { framing: "wide", grade: grade || "neutral", lut: refInfo?.lut || null });
   else rmSync(join(src, "base.mp4"), { force: true });
   const matte = variants.some((v) => v.layout === "reference") && (plan.behind?.length ?? 0) > 0 ? await ensureMatte(job, src) : null;
 
@@ -518,6 +564,7 @@ export async function runJob(id) {
 
 async function runShorts(job, { src, raw, info, useClaude }) {
   const id = job.id;
+  const refInfo = await prepareReference(job, src);
   let picks = job.plan?.shorts;
   if (!picks) {
     const dur = raw[raw.length - 1].end;
@@ -554,7 +601,7 @@ async function runShorts(job, { src, raw, info, useClaude }) {
       let plan = it.post?.plan;
       if (!plan) {
         setItem(it.id, { step: "Planificando la edición", progress: 0.05 });
-        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: withUserNotes(styleNotesForAI(), job.options?.notes), angle: it.short.angle, hook: it.short.hook });
+        plan = await makePlan(words.words.map((w) => ({ ...w, p: 1 })), { vocab: job.options.vocab, useClaude, isShort: true, styleNotes: withUserNotes(styleNotesForAI(), [job.options?.notes, refInfo?.notes ? `Edítalo como su vídeo de referencia: ${refInfo.notes}` : ""].filter(Boolean).join(" · ")), angle: it.short.angle, hook: it.short.hook });
         setItem(it.id, { post: { plan } });
       }
       if (plan.graphics?.some((g) => g.type === "motion" && !g.design)) {
@@ -562,7 +609,7 @@ async function runShorts(job, { src, raw, info, useClaude }) {
         setItem(it.id, { post: { ...(it.post || {}), plan } });
       }
       setItem(it.id, { step: `Plano y color: ${FRAMINGS[look.framing]?.label}, ${GRADES[look.grade]?.label}`, progress: 0.06 });
-      await buildBase(work, look);
+      await buildBase(work, { ...look, lut: refInfo?.lut || null });
       const matte = plan.behind?.length && variant.layout === "reference" ? await ensureMatte(job, work) : null;
       await produceItem(job, it, { work, words: words.words, plan, matte, info, variant, titleBase: it.short.title, look });
     } catch (e) {
