@@ -11,6 +11,7 @@ sfx.json (lo escribe Claude a partir del plan de gráficos; dB respecto al pico 
 Regla: los efectos van 20-25 dB por debajo de la voz. Que acompañen, que no tapen.
 Música: 12 dB bajo la voz y 7 dB más abajo mientras se habla (ataque 40 ms, relajación 450 ms).
 """
+import sys
 import argparse, json, os, re, subprocess
 import comun  # consola UTF-8 en Windows
 import numpy as np
@@ -59,15 +60,28 @@ voz = load(P("voz.wav"))
 n = int(DUR * SR) + SR
 mix = np.zeros((n, 2), np.float32); mix[:min(n, len(voz))] = voz[:n]
 
-# 2 · Efectos
+# 2 · Efectos (uno que falle no para la mezcla: se salta y se avisa)
 if a.sfx:
-    for ev in json.load(open(a.sfx, encoding="utf-8")):
-        s = load(ev["file"] if os.path.isabs(ev["file"]) else os.path.join(os.path.dirname(a.sfx), ev["file"]), ev.get("max"))
-        if ev.get("max"):
-            f = int(0.04 * SR); s[-f:] *= np.linspace(1, 0, f)[:, None]
-        i = int(round(ev["t"] * SR)); j = min(n, i + len(s))
-        mix[i:j] += s[:j - i] * (10 ** (ev["db"] / 20))
-    print(f"efectos: {len(json.load(open(a.sfx, encoding='utf-8')))}")
+    events = json.load(open(a.sfx, encoding="utf-8"))
+    ok = 0
+    for ev in events:
+        try:
+            s = load(ev["file"] if os.path.isabs(ev["file"]) else os.path.join(os.path.dirname(a.sfx), ev["file"]), ev.get("max"))
+            if len(s) < 16:
+                continue
+            if ev.get("max"):
+                f = min(int(0.04 * SR), len(s) // 2)  # fundido de salida, nunca más largo que el propio sonido
+                if f > 1:
+                    s[-f:] *= np.linspace(1, 0, f)[:, None]
+            i = max(0, int(round(float(ev["t"]) * SR)))
+            if i >= n:
+                continue
+            j = min(n, i + len(s))
+            mix[i:j] += s[:j - i] * (10 ** (float(ev["db"]) / 20))
+            ok += 1
+        except Exception as e:
+            print(f"efecto saltado ({ev.get('file')}): {e}", file=sys.stderr)
+    print(f"efectos: {ok} de {len(events)}")
 
 # 3 · Música con ducking bajo la voz
 if a.music:

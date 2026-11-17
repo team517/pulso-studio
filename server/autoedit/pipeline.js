@@ -464,7 +464,20 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
     else g.type = "card"; // no está: tarjeta con el pie
   }
   writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
-  const out = await renderVariant(input, (f, label) => setItem(item.id, { progress: Math.min(0.8, 0.02 + f * 0.78), step: label || "Renderizando" }));
+  const onProg = (f, label) => setItem(item.id, { progress: Math.min(0.8, 0.02 + f * 0.78), step: label || "Renderizando" });
+  let out, renderNote = null;
+  try {
+    out = await renderVariant(input, onProg);
+  } catch (e) {
+    // Si lo nuevo (animación diseñada, gráfico copiado, logo, imagen) rompe el render, se rehace sin ello
+    const risky = new Set(["motion", "custom", "logo", "image"]);
+    if (!input.graphics.some((g) => risky.has(g.type))) throw e;
+    console.warn("[autoedit] render con gráficos nuevos falló, rehago sin ellos:", String(e.message).slice(-300));
+    input.graphics = input.graphics.filter((g) => !risky.has(g.type));
+    writeFileSync(join(dir, "render-input.json"), JSON.stringify(input, null, 1));
+    out = await renderVariant(input, onProg);
+    renderNote = "Una animación o gráfico nuevo dio problemas y se ha quitado de esta versión.";
+  }
 
   // Sonido
   setItem(item.id, { status: "mixing", step: "Mezclando voz, efectos y música (−14 LUFS)", progress: 0.82 });
@@ -489,11 +502,32 @@ async function produceItem(job, item, { work, words, plan, matte, info, variant,
   const styleMusic = getStyle().music;
   const music = await ensureMusic(join(ROOT, job.id), styleMusic && styleMusic !== "auto" ? styleMusic : (look?.music || variant.music), duration);
   const finalMp4 = join(dir, "final.mp4");
-  await py("mix.py", ["--work", mixDir, "--sfx", join(mixDir, "sfx.json"), ...(music ? ["--music", music] : []), "--video", out.video, "--out", finalMp4]);
+  // Mezcla con red de seguridad: si algo falla, se reintenta sin efectos, luego sin música y, como último
+  // recurso, el vídeo con tu voz tal cual. Un sonido nunca deja la versión sin terminar.
+  const attempts = [
+    ["--sfx", join(mixDir, "sfx.json"), ...(music ? ["--music", music] : [])],
+    [...(music ? ["--music", music] : [])],
+    [],
+  ];
+  let mixed = false, mixNote = null;
+  for (const [k, extra] of attempts.entries()) {
+    try {
+      await py("mix.py", ["--work", mixDir, ...extra, "--video", out.video, "--out", finalMp4]);
+      mixed = true;
+      if (k > 0) mixNote = k === 1 ? "Sin efectos de sonido (fallaron al mezclar)." : "Sin efectos ni música (fallaron al mezclar).";
+      break;
+    } catch (e) { console.warn(`[autoedit] mezcla (intento ${k + 1}):`, String(e.message).slice(-400)); }
+  }
+  if (!mixed) {
+    // Voz recortada con los mismos tramos, sin procesar
+    await run("ffmpeg", ["-v", "error", "-y", "-i", out.video, "-i", join(work, "cut.mp4"), "-map", "0:v", "-map", "1:a?", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart", finalMp4]);
+    mixNote = "Con el sonido original (la mezcla falló).";
+  }
 
-  // Revisión automática
+  // Revisión automática (si falla, la versión sigue: solo falta la nota)
   setItem(item.id, { status: "qa", step: "Revisión automática de fallos", progress: 0.92 });
-  const qa = await autoReview(item, finalMp4, input, dir);
+  let qa = await autoReview(item, finalMp4, input, dir).catch((e) => ({ checked: false, ok: null, issues: [], note: `No se pudo revisar: ${String(e.message || e).slice(0, 200)}` }));
+  if (mixNote || renderNote) qa = { ...(qa || {}), note: `${[renderNote, mixNote].filter(Boolean).join(" ")} ${qa?.note || ""}`.trim() };
 
   // Registro en «Vídeos exportados»
   const expId = item.export_id || uid();
