@@ -81,7 +81,7 @@ export default function Calendar() {
       const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0);
       const pf = takePrefill();
       setEditing({ post: null, date: d, exportId: nuevo, prefill: pf && pf.exportId === nuevo ? pf : null });
-      navigate("/calendario", true);
+      navigate("/calendario?vista=publicaciones", true);
     }
   }, [path]);
 

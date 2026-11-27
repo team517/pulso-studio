@@ -57,7 +57,7 @@ export default function Videos() {
                 ) : (
                   <>
                     <span className="pcard__meta"><span className="mono">{fmtTime(e.duration ?? 0)}</span>·<span>{e.width}×{e.height}</span>·<span>{fmtSize(e.size)}</span></span>
-                    <button className="btn btn--sm" style={{ marginTop: 8 }} onClick={(ev) => { ev.stopPropagation(); navigate(`/calendario?nuevo=${e.id}`); }}><CalendarPlus size={14} /> Programar</button>
+                    <button className="btn btn--sm" style={{ marginTop: 8 }} onClick={(ev) => { ev.stopPropagation(); navigate(`/calendario?vista=publicaciones&nuevo=${e.id}`); }}><CalendarPlus size={14} /> Programar</button>
                   </>
                 )}
               </div>
@@ -68,7 +68,7 @@ export default function Videos() {
 
       {play && (
         <Modal title={play.name} onClose={() => setPlay(null)}
-          foot={<><a className="btn" href={play.url!} download={`${play.name}.mp4`}><Download size={15} /> Descargar</a><span className="spacer" /><button className="btn btn--primary" onClick={() => navigate(`/calendario?nuevo=${play.id}`)}><CalendarPlus size={15} /> Programar publicación</button></>}>
+          foot={<><a className="btn" href={play.url!} download={`${play.name}.mp4`}><Download size={15} /> Descargar</a><span className="spacer" /><button className="btn btn--primary" onClick={() => navigate(`/calendario?vista=publicaciones&nuevo=${play.id}`)}><CalendarPlus size={15} /> Programar publicación</button></>}>
           <video src={play.url!} controls autoPlay style={{ width: "100%", maxHeight: "62vh", background: "#000", borderRadius: 10 }} />
         </Modal>
       )}

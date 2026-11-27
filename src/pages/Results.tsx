@@ -141,7 +141,7 @@ export default function Results() {
           <div className="empty__icon"><BarChart3 size={24} /></div>
           <h3>Todavía no hay nada publicado</h3>
           <p>Cuando se publique un vídeo desde el Calendario, aquí verás cómo funciona en cada red. Prueba a publicarlo como «reel de prueba» en Instagram para ver si gusta antes de enseñárselo a tus seguidores.</p>
-          <button className="btn btn--primary" onClick={() => navigate("/calendario")}><CalendarDays size={15} /> Ir al calendario</button>
+          <button className="btn btn--primary" onClick={() => navigate("/calendario?vista=publicaciones")}><CalendarDays size={15} /> Ir al calendario</button>
         </div>
       ) : (
         <>
@@ -313,7 +313,7 @@ function PromoteModal({ item, igConnected, onClose, onDone }: { item: InsightIte
     <Modal wide title="Publicar como reel normal" icon={<Rocket size={18} color="var(--accent-2)" />} onClose={onClose}
       foot={
         <>
-          <button className="btn" onClick={() => navigate("/calendario")}><CalendarDays size={15} /> Ver calendario</button>
+          <button className="btn" onClick={() => navigate("/calendario?vista=publicaciones")}><CalendarDays size={15} /> Ver calendario</button>
           <span className="spacer" />
           <button className="btn" onClick={onClose}>Cancelar</button>
           <button className="btn btn--primary" onClick={confirm} disabled={busy || noVideo}>

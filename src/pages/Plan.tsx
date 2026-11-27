@@ -30,10 +30,10 @@ export default function Plan() {
     <div className="page id-page">
       <div className="page-head">
         <div>
-          <h1>Mi semana</h1>
+          <h1>Plan de contenido</h1>
           <p>Tu semana tipo y el plan del mes: qué publicas cada día, en qué formato y qué te toca grabar. Claude escribe el guion de cada pieza.</p>
         </div>
-        <div className="page-head__actions"><button className="btn" onClick={() => navigate("/ideas")}>Ideas de contenido</button></div>
+        <div className="page-head__actions"><button className="btn" onClick={() => navigate("/ideas")}>Ideas</button></div>
       </div>
       <JobsBar jobs={state.jobs} onChange={reload} pcHint={IN_PANEL} />
       <WeekTemplate week={state.week} onSaved={(w) => setState({ ...state, week: w })} />

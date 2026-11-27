@@ -63,7 +63,7 @@ export default function Edited() {
   const review = async (it: EditedItem, r: EditedItem["review"]) => { await autoApi.review(it.id, r); load(); };
   const schedule = (it: EditedItem, trial: boolean) => {
     setPrefill({ exportId: it.video.id, caption: it.post?.caption, title: it.post?.youtubeTitle, trial });
-    navigate(`/calendario?nuevo=${it.video.id}`);
+    navigate(`/calendario?vista=publicaciones&nuevo=${it.video.id}`);
   };
 
   return (

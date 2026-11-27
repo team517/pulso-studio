@@ -1,34 +1,26 @@
 import { useEffect, useState } from "react";
-import { BarChart3, CalendarDays, CalendarRange, Clapperboard, Film, FolderOpen, LayoutGrid, Lightbulb, Link2, Paintbrush, Sparkles } from "lucide-react";
+import { BarChart3, CalendarDays, Lightbulb, Link2, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
 import { IN_PANEL, logout } from "./base";
 import Projects from "./pages/Projects";
 import Library from "./pages/Library";
 import Videos from "./pages/Videos";
-import Calendar from "./pages/Calendar";
 import Connections from "./pages/Connections";
-import AutoEdit from "./pages/AutoEdit";
 import Results from "./pages/Results";
-import Edited from "./pages/Edited";
-import StylePage from "./pages/Style";
 import ConnectPC, { approvePC, type PairRequest } from "./pages/ConnectPC";
 import Editor from "./editor/Editor";
 import Ideas from "./pages/Ideas";
-import Plan from "./pages/Plan";
+import { AutoEditHub, CalendarHub } from "./pages/Hubs";
 import ChangePassword from "./pages/ChangePassword";
 
+// Menú corto: cada sección agrupa lo suyo en pestañas (Calendario: plan + publicaciones; Auto-edición: editar,
+// editados y referentes). El editor manual, la biblioteca y los vídeos exportados siguen en /proyectos, /biblioteca y /videos.
 const NAV = [
-  { path: "/ideas", label: "Ideas de contenido", icon: Lightbulb, group: "Planificar" },
-  { path: "/semana", label: "Mi semana", icon: CalendarRange, group: "Planificar" },
-  { path: "/autoedicion", label: "Auto-edición", icon: Sparkles, group: "Crear" },
-  { path: "/editados", label: "Editados", icon: LayoutGrid, group: "Crear" },
-  { path: "/estilo", label: "Estilo de edición", icon: Paintbrush, group: "Crear" },
-  { path: "/", label: "Editor manual", icon: Clapperboard, group: "Crear" },
-  { path: "/biblioteca", label: "Biblioteca", icon: FolderOpen, group: "Crear" },
-  { path: "/videos", label: "Vídeos exportados", icon: Film, group: "Crear" },
-  { path: "/calendario", label: "Calendario", icon: CalendarDays, group: "Publicar" },
-  { path: "/resultados", label: "Resultados", icon: BarChart3, group: "Publicar" },
-  { path: "/conexiones", label: "Conexiones", icon: Link2, group: "Publicar" },
+  { path: "/ideas", label: "Ideas", icon: Lightbulb, also: ["/"] },
+  { path: "/calendario", label: "Calendario", icon: CalendarDays, also: ["/semana"] },
+  { path: "/autoedicion", label: "Auto-edición", icon: Sparkles, also: ["/editados", "/estilo"] },
+  { path: "/resultados", label: "Resultados", icon: BarChart3, also: [] as string[] },
+  { path: "/conexiones", label: "Conexiones", icon: Link2, also: [] as string[] },
 ];
 
 export default function App() {
@@ -86,20 +78,17 @@ export default function App() {
   const editorId = pathname.match(/^\/editor\/([\w-]+)/)?.[1];
   if (editorId) return <Editor key={editorId} id={editorId} />;
 
-  let page = <Projects />;
+  let page = <Ideas />;
+  if (pathname === "/proyectos") page = <Projects />;
   if (pathname === "/biblioteca") page = <Library />;
   else if (pathname === "/videos") page = <Videos />;
-  else if (pathname === "/calendario") page = <Calendar />;
+  else if (pathname === "/calendario" || pathname === "/semana") page = <CalendarHub />;
   else if (pathname === "/conexiones") page = <Connections />;
-  else if (pathname === "/autoedicion") page = <AutoEdit />;
+  else if (pathname === "/autoedicion" || pathname === "/editados" || pathname === "/estilo") page = <AutoEditHub />;
   else if (pathname === "/resultados") page = <Results />;
-  else if (pathname === "/editados") page = <Edited />;
-  else if (pathname === "/estilo") page = <StylePage />;
   else if (pathname === "/conectar-pc") page = <ConnectPC />;
   else if (pathname === "/ideas") page = <Ideas />;
-  else if (pathname === "/semana") page = <Plan />;
 
-  let lastGroup = "";
   return (
     <div className="shell">
       <aside className="side">
@@ -111,13 +100,10 @@ export default function App() {
           </span>
         </div>
         {NAV.map((n) => {
-          const head = n.group !== lastGroup ? <div className="nav-label">{n.group}</div> : null;
-          lastGroup = n.group;
           const Icon = n.icon;
-          const active = n.path === "/" ? pathname === "/" : pathname.startsWith(n.path);
+          const active = pathname.startsWith(n.path) || n.also.includes(pathname);
           return (
             <div key={n.path}>
-              {head}
               <button className={"nav-item" + (active ? " is-active" : "")} onClick={() => navigate(n.path)}>
                 <Icon size={18} /> {n.label}
               </button>

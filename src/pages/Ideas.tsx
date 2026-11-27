@@ -46,7 +46,7 @@ export default function Ideas() {
       if (x.status === "done" && prev.j[x.id] && prev.j[x.id] !== "done") {
         if (x.kind === "creator") { toast(`${x.label}: listo. Ya tienes sus ganchos, estructuras y temas.`); if (x.ref) setFresh((f) => [...new Set([...f, x.ref!])]); }
         else if (x.kind === "ideas") toast(`${x.label}: listas en «Ideas».`);
-        else if (x.kind === "plan") toast(`${x.label}: listo en «Mi semana».`);
+        else if (x.kind === "plan") toast(`${x.label}: listo en el Calendario.`);
       }
       if (x.status === "error" && prev.j[x.id] && prev.j[x.id] !== "error") toast(`${x.label}: ${x.error || "falló"}`, "bad");
     }
@@ -63,7 +63,7 @@ export default function Ideas() {
           <p>Claude piensa ideas y te escribe el guion listo para grabar: qué dices, qué se ve y cómo grabarlo. Se basa en tu negocio y en lo que mejor les funciona a los creadores que te inspiran.</p>
         </div>
         <div className="page-head__actions">
-          <button className="btn" onClick={() => navigate("/semana")}>Mi semana</button>
+          <button className="btn" onClick={() => navigate("/calendario")}>Ver calendario</button>
           <button className="btn btn--primary" onClick={() => setGenerating({})}><Sparkles size={16} /> Generar ideas</button>
         </div>
       </div>

@@ -395,7 +395,7 @@ function ItemCard({ item, onChange }: { item: AutoItem; onChange: () => void }) 
   const schedule = (trial: boolean) => {
     if (!item.video) return;
     setPrefill({ exportId: item.video.id, caption: item.post?.caption, title: item.post?.youtubeTitle, trial });
-    navigate(`/calendario?nuevo=${item.video.id}`);
+    navigate(`/calendario?vista=publicaciones&nuevo=${item.video.id}`);
   };
 
   const shape = useMemo(() => ({ aspectRatio: `${w} / ${h}` }), [w, h]);
