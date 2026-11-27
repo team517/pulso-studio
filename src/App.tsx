@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BarChart3, CalendarDays, Clapperboard, Film, FolderOpen, LayoutGrid, Link2, Paintbrush, Sparkles } from "lucide-react";
+import { BarChart3, CalendarDays, CalendarRange, Clapperboard, Film, FolderOpen, LayoutGrid, Lightbulb, Link2, Paintbrush, Sparkles } from "lucide-react";
 import { navigate, usePath } from "./ui";
 import { IN_PANEL, logout } from "./base";
 import Projects from "./pages/Projects";
@@ -13,8 +13,12 @@ import Edited from "./pages/Edited";
 import StylePage from "./pages/Style";
 import ConnectPC, { approvePC, type PairRequest } from "./pages/ConnectPC";
 import Editor from "./editor/Editor";
+import Ideas from "./pages/Ideas";
+import Plan from "./pages/Plan";
 
 const NAV = [
+  { path: "/ideas", label: "Ideas de contenido", icon: Lightbulb, group: "Planificar" },
+  { path: "/semana", label: "Mi semana", icon: CalendarRange, group: "Planificar" },
   { path: "/autoedicion", label: "Auto-edición", icon: Sparkles, group: "Crear" },
   { path: "/editados", label: "Editados", icon: LayoutGrid, group: "Crear" },
   { path: "/estilo", label: "Estilo de edición", icon: Paintbrush, group: "Crear" },
@@ -90,6 +94,8 @@ export default function App() {
   else if (pathname === "/editados") page = <Edited />;
   else if (pathname === "/estilo") page = <StylePage />;
   else if (pathname === "/conectar-pc") page = <ConnectPC />;
+  else if (pathname === "/ideas") page = <Ideas />;
+  else if (pathname === "/semana") page = <Plan />;
 
   let lastGroup = "";
   return (

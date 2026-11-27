@@ -274,7 +274,7 @@ async function instagramConf() {
 /** Servidor y token de Instagram para leer estadísticas (sin exponer el token fuera del servidor). */
 export async function instagramAuth() {
   const c = await instagramConf();
-  return { host: c.mode === "instagram" ? IG : FB, token: c.accessToken, mode: c.mode };
+  return { host: c.mode === "instagram" ? IG : FB, token: c.accessToken, mode: c.mode, accountId: c.account?.id ?? null, account: c.account?.name ?? null };
 }
 
 /** Reel de prueba: solo lo ven quienes no te siguen. MANUAL = lo pasas tú a normal en la app;

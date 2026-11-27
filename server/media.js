@@ -65,6 +65,12 @@ export function transcribe(mediaId, language = "es") {
   return transcribeNow(mediaId, language);
 }
 
+/** Transcribe un archivo cualquiera (p. ej. un reel descargado) y devuelve sus palabras [{w, s, e}]. */
+export async function transcribeFile(file, language = "es") {
+  const out = await onGpu(() => run(python().cmd, [join(HERE, "transcribe.py"), file, language], { env: python().env }));
+  return JSON.parse(out.trim().split("\n").pop());
+}
+
 /** Transcribe ya en este ordenador (devuelve una promesa que acaba cuando termina). */
 export function transcribeNow(mediaId, language = "es") {
   if (queued.has(mediaId)) return queued.get(mediaId);

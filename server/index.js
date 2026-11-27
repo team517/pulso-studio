@@ -17,6 +17,7 @@ import { IS_SERVER, BASE, MODE } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { registerWorkerRoutes } from "./worker-api.js";
 import { registerPresetRoutes } from "./presets.js";
+import { registerIdeasRoutes } from "./ideas.js";
 import { composeVideos, insertComposed } from "./compose.js";
 
 // En modo servidor todo cuelga de BASE (/studio), que es como lo sirve el panel de ChipsFinder
@@ -374,6 +375,10 @@ registerAutoeditRoutes(app, wrap);
 
 registerStyleRoutes(app, wrap);
 registerPresetRoutes(app, wrap);
+
+/* ---------- Ideas de contenido y plan de la semana ---------- */
+
+registerIdeasRoutes(app, wrap);
 
 /* ---------- Resultados (visitas de cada publicación) ---------- */
 

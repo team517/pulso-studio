@@ -384,6 +384,31 @@ async function doAnalyze() {
   if (r.seen) await call("POST", "/api/worker/style/analysis", { aiNotes: r.aiNotes, aiSuggested: s.aiSuggested || null });
 }
 
+/** Ideas de contenido: creadores, ideas con guion, plan del mes (Claude en este PC). */
+async function doIdeas({ job }) {
+  setBusy(`Claude: ${job.label || "ideas de contenido"}`);
+  log(busy);
+  const state = (b) => call("POST", `/api/worker/ideas/${job.id}/state`, b).catch((e) => log("Sin conexión con el panel:", e.message));
+  const { runIdeasJob } = await import("./ideas-brain.js");
+  const { askClaude } = await import("./autoedit/brain.js");
+  const { transcribeFile } = await import("./media.js");
+  try {
+    let last = 0;
+    const result = await runIdeasJob(job, {
+      ask: askClaude, transcribe: transcribeFile, tmp: join(DATA, "tmp"),
+      step: (step, progress) => { setBusy(`Claude: ${step}`); if (Date.now() - last > 1500) { last = Date.now(); state({ status: "running", step, progress }); } },
+    });
+    for (let i = 0; i < 5; i++) {
+      try { await call("POST", `/api/worker/ideas/${job.id}/state`, { result }); break; } catch (e) { log("Reintentando subir las ideas:", e.message); await sleep(10e3); }
+    }
+    log(`Terminado: ${job.label}`);
+  } catch (e) {
+    const login = e instanceof NeedLogin;
+    if (login) resetClaudeCheck();
+    await state(login ? { status: "needs_login", step: null, error: "Claude no tiene la sesión iniciada en tu PC." } : { status: "error", step: null, error: String(e.message || e).slice(0, 500) });
+  }
+}
+
 async function doPreset({ preset, assets }) {
   setBusy(`Claude está estudiando el estilo «${preset.name}»`);
   log(busy);
@@ -557,6 +582,7 @@ for (;;) {
     else if (task.type === "transcribe") await doTranscribe(task);
     else if (task.type === "analyze") await doAnalyze();
     else if (task.type === "preset") await doPreset(task);
+    else if (task.type === "ideas") await doIdeas(task);
   } catch (e) {
     if (e instanceof Unauthorized) { await reconnect(); continue; }
     log("Fallo:", e.message);

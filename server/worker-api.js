@@ -10,6 +10,7 @@ import { isWorker } from "./auth.js";
 import { setJob, setItem } from "./autoedit/pipeline.js";
 import { STYLE_DIR } from "./style.js";
 import { nextPresetTask } from "./presets.js";
+import { nextIdeasTask } from "./ideas.js";
 
 const STALE_MIN = 15; // si el PC no da señales en 15 min, el trabajo vuelve a la cola
 
@@ -21,8 +22,8 @@ export function workerStatus() {
 }
 
 // Copia de seguridad en tu PC: tablas y carpetas que se copian (y se devuelven si el servidor empieza de cero)
-const BACKUP_TABLES = ["folders", "media", "projects", "exports", "posts", "post_insights", "post_insights_state", "style_assets", "style_presets", "autoedit_jobs", "autoedit_items", "settings"];
-const CONTENT_TABLES = ["media", "projects", "exports", "posts", "style_assets", "style_presets", "autoedit_jobs"];
+const BACKUP_TABLES = ["folders", "media", "projects", "exports", "posts", "post_insights", "post_insights_state", "style_assets", "style_presets", "autoedit_jobs", "autoedit_items", "ideas_creators", "ideas", "settings"];
+const CONTENT_TABLES = ["media", "projects", "exports", "posts", "style_assets", "style_presets", "autoedit_jobs", "ideas_creators", "ideas"];
 const SKIP_SETTING = /^(auth:|worker:|server:id$)/;
 const fileDirs = () => ({ media: DIRS.media, thumbs: DIRS.thumbs, exports: DIRS.exports, style: STYLE_DIR });
 const hasTable = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
@@ -102,6 +103,8 @@ export function registerWorkerRoutes(app, wrap) {
     }
     const preset = nextPresetTask();
     if (preset) return res.json(preset);
+    const ideas = nextIdeasTask();
+    if (ideas) return res.json(ideas);
     for (const m of db.prepare("SELECT * FROM media WHERE transcript_status = 'running' ORDER BY created_at").all()) {
       if (Date.now() - (claimedTx.get(m.id) || 0) < STALE_MIN * 60e3) continue;
       claimedTx.set(m.id, Date.now());
