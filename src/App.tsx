@@ -15,6 +15,7 @@ import ConnectPC, { approvePC, type PairRequest } from "./pages/ConnectPC";
 import Editor from "./editor/Editor";
 import Ideas from "./pages/Ideas";
 import Plan from "./pages/Plan";
+import ChangePassword from "./pages/ChangePassword";
 
 const NAV = [
   { path: "/ideas", label: "Ideas de contenido", icon: Lightbulb, group: "Planificar" },
@@ -37,6 +38,7 @@ export default function App() {
   const [pending, setPending] = useState<PairRequest[]>([]);
   const [approving, setApproving] = useState(false);
   const [pcJustConnected, setPcJustConnected] = useState<string | null>(null);
+  const [pwOpen, setPwOpen] = useState(false);
   const pathname = path.split("?")[0];
 
   // Conexión automática: si en este ordenador está abierto el editor y no está conectado, se le da la clave
@@ -125,7 +127,10 @@ export default function App() {
         <div className="side__foot">
           {IN_PANEL ? (
             <>
-              <button className="btn btn--ghost btn--sm side__out" onClick={logout}>Salir</button>
+              <span className="side__acts">
+                <button className="btn btn--ghost btn--sm" onClick={() => setPwOpen(true)}>Cambiar contraseña</button>
+                <button className="btn btn--ghost btn--sm" onClick={logout}>Salir</button>
+              </span>
               <span className={"dot" + (pc === null ? " is-wait" : pc.online ? "" : " is-off")} />
               {!online ? "Sin conexión con el servidor" : pc === null ? "Comprobando tu PC…" : pc.online ? (pc.busy ? `Tu PC: ${pc.busy}` : `${pc.name || "Tu PC"} está listo para editar`) : "Tu PC está apagado: los vídeos esperan en cola"}
             </>
@@ -151,6 +156,7 @@ export default function App() {
         )}
         {page}
       </main>
+      {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
     </div>
   );
 }

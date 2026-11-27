@@ -260,6 +260,11 @@ a { color: var(--accent-2); text-decoration: none; }
 .gate__err { color: var(--bad, #ff6b6b) !important; font-size: 13px; }
 .side__foot { flex-wrap: wrap; }
 .side__out { order: 2; margin-left: auto; }
+.side__acts { order: 2; width: 100%; display: flex; justify-content: space-between; gap: 4px; margin-top: 4px; }
+.side__acts .btn { padding: 0 8px; font-size: 12px; color: var(--ink-3); }
+.pw-form { display: flex; flex-direction: column; gap: 14px; }
+.pw-eye { height: 22px; padding: 0 6px; font-size: 11.5px; }
+.pw-note { font-size: 12px; margin: 0; }
 .gate__remember { display: flex; align-items: center; gap: 8px; align-self: flex-start; font-size: 13px; color: var(--ink-3); cursor: pointer; }
 .gate__card { justify-items: stretch; }
 .gate__card .brand__logo, .gate__card h1, .gate__card > p { justify-self: center; }

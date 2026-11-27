@@ -157,6 +157,29 @@ export function registerAuth(app) {
 
   app.get("/api/me", (req, res) => res.json({ ok: true, email: sessionOf(req)?.email ?? null }));
 
+  // Cambiar la contraseña desde la web (con la sesión abierta y la contraseña actual). Se cierran las demás sesiones
+  // y este navegador sigue dentro con una sesión nueva.
+  const pwTries = new Map();
+  app.post("/api/password", (req, res) => {
+    const ses = sessionOf(req);
+    if (!ses) return res.status(401).json({ error: "Sin sesión", code: "no_session" });
+    const ip = String(req.ip || "");
+    const t = pwTries.get(ip) || { n: 0, at: Date.now() };
+    if (Date.now() - t.at > 15 * 60e3) { t.n = 0; t.at = Date.now(); }
+    if (t.n >= 10) return res.status(429).json({ error: "Demasiados intentos. Espera 15 minutos." });
+    const cur = owner();
+    const current = String(req.body?.current || ""), next = String(req.body?.password || "");
+    if (!safeEqual(hashOf(current, cur.salt), cur.hash)) { t.n++; pwTries.set(ip, t); return res.status(400).json({ error: "La contraseña actual no es correcta." }); }
+    if (next.length < 8) return res.status(400).json({ error: "La contraseña nueva tiene que tener al menos 8 caracteres." });
+    pwTries.delete(ip);
+    const salt = randomBytes(16).toString("base64url");
+    const o = { email: OWNER, salt, hash: hashOf(next, salt), ver: (Number(cur.ver) || 0) + 1, at: new Date().toISOString() };
+    setSetting("auth:owner", o);
+    setSession(res, o, ses.keep !== false);
+    console.log(`[auth] Contraseña cambiada desde la web para ${OWNER}`);
+    res.json({ ok: true, email: OWNER });
+  });
+
   // En las respuestas, las rutas de archivos llevan delante la ruta base (/studio/files/…)
   if (BASE) {
     const fix = (v) => {
