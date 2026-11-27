@@ -599,12 +599,19 @@ function backupCycle() {
 log(`Pulso Studio · ${PC_NAME} edita para ${SERVER}`);
 seedFromThisPC();
 await hello();
+// Lo que este PC dejó a medias al cerrarse vuelve a la cola (si no, se quedaría «en marcha» un buen rato)
+await call("POST", "/api/worker/ideas/requeue").then((r) => r?.requeued && log(`Retomo ${r.requeued} encargo(s) de ideas que quedaron a medias`)).catch(() => {});
 setInterval(hello, 60e3);
 let lastBackup = 0;
 for (;;) {
   let task = null;
   try {
-    if (Date.now() - lastBackup > 3 * 60e3) { lastBackup = Date.now(); await backupCycle(); }
+    // La copia (y devolverla si el panel se vació) va en segundo plano: puede tardar mucho subiendo vídeos
+    // y no debe parar los encargos (leer creadores, ideas, ediciones…)
+    if (Date.now() - lastBackup > 3 * 60e3) {
+      lastBackup = Date.now();
+      backupCycle().catch((e) => log(e instanceof Unauthorized ? "El panel ya no reconoce este PC (copia)." : "No se pudo hacer la copia:", e.message));
+    }
     task = await call("GET", "/api/worker/next");
   } catch (e) {
     if (e instanceof Unauthorized) { log("El panel ya no reconoce este PC: lo conecto otra vez."); await reconnect(); lastBackup = 0; continue; }
@@ -612,7 +619,7 @@ for (;;) {
     await sleep(20e3);
     continue;
   }
-  if (!task?.type) { await sleep(8000); continue; }
+  if (!task?.type) { await sleep(4000); continue; }
   try {
     if (task.type === "job") await doJob(task);
     else if (task.type === "transcribe") await doTranscribe(task);

@@ -327,7 +327,7 @@ function jobFailed(job, error) {
 
 export function nextIdeasTask() {
   if (!IS_SERVER) return null;
-  const stale = new Date(Date.now() - 25 * 60e3).toISOString();
+  const stale = new Date(Date.now() - 12 * 60e3).toISOString();
   const j = db.prepare("SELECT * FROM ideas_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1").get()
     || db.prepare("SELECT * FROM ideas_jobs WHERE status = 'running' AND updated_at < ? ORDER BY created_at LIMIT 1").get(stale);
   if (!j) return null;
@@ -542,6 +542,11 @@ export function registerIdeasRoutes(app, wrap) {
       mkdirSync(join(IDEAS_MEDIA, ref), { recursive: true });
       renameSync(req.file.path, join(IDEAS_MEDIA, ref, name));
       res.json({ url: `/files/ideas/${ref}/${name}?v=${Date.now().toString(36)}` });
+    }));
+    // El editor del PC acaba de arrancar: lo que tenía a medias (se cerró o se reinició) vuelve a la cola
+    app.post("/api/worker/ideas/requeue", guard, wrap((req, res) => {
+      const r = db.prepare("UPDATE ideas_jobs SET status = 'queued', step = 'Esperando a tu PC (Claude)', progress = 0 WHERE status = 'running'").run();
+      res.json({ ok: true, requeued: r.changes });
     }));
     app.post("/api/worker/ideas/:id/state", guard, wrap((req, res) => {
       const j = db.prepare("SELECT * FROM ideas_jobs WHERE id = ?").get(req.params.id);
