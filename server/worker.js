@@ -88,9 +88,38 @@ let localPaired = false;
     }
     send(res, 404, { error: "No existe." });
   });
-  local.on("error", (e) => log(`Conexión automática no disponible (puerto ${LOCAL_PORT}):`, e.code || e.message));
+  local.on("error", async (e) => {
+    // Un solo editor por PC: si el puerto ya lo tiene otro editor de Pulso Studio, este se cierra (código 3)
+    if (e.code === "EADDRINUSE") {
+      const other = await fetch(`http://127.0.0.1:${LOCAL_PORT}/status`, { headers: { origin: ORIGIN }, signal: AbortSignal.timeout(4000) })
+        .then((r) => r.json()).then((j) => !!j && "connected" in j).catch(() => false);
+      if (other) { log("Ya hay un editor de Pulso Studio funcionando en este PC (en segundo plano). Este se cierra."); process.exit(3); }
+    }
+    log(`Conexión automática no disponible (puerto ${LOCAL_PORT}):`, e.code || e.message);
+  });
   local.listen(LOCAL_PORT, "127.0.0.1");
   local.unref();
+}
+
+/* ---------- Que el PC no se duerma mientras está enchufado ----------
+   Si Windows suspende el PC, el panel lo ve apagado y los vídeos esperan. Mientras el editor esté abierto y el PC
+   enchufado, se le pide a Windows que no se suspenda por inactividad (como hace un reproductor de vídeo; la pantalla
+   sí se puede apagar). Con batería, Windows hace lo de siempre. Se desactiva con STUDIO_ALLOW_SLEEP=1. */
+if (process.platform === "win32" && !process.env.STUDIO_ALLOW_SLEEP) {
+  const ps = [
+    "Add-Type -Namespace PS -Name Power -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);'",
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "while ($true) {",
+    "  if (-not (Get-Process -Id " + process.pid + " -ErrorAction SilentlyContinue)) { break }",
+    "  $ac = [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus -eq 'Online'",
+    "  [void][PS.Power]::SetThreadExecutionState($(if ($ac) { [uint32]2147483649 } else { [uint32]2147483648 }))",
+    "  Start-Sleep -Seconds 60",
+    "}",
+  ].join("\n");
+  try {
+    childProcess.spawn("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
+      { windowsHide: true, stdio: "ignore", detached: true }).unref();
+  } catch { /* sin PowerShell: Windows decide */ }
 }
 
 /** Conectar el PC: se conecta solo desde la web; si no, código y botón «Conectar». */
@@ -390,12 +419,19 @@ async function doIdeas({ job }) {
   log(busy);
   const state = (b) => call("POST", `/api/worker/ideas/${job.id}/state`, b).catch((e) => log("Sin conexión con el panel:", e.message));
   const { runIdeasJob } = await import("./ideas-brain.js");
-  const { askClaude } = await import("./autoedit/brain.js");
+  const { askClaude, askClaudeTools } = await import("./autoedit/brain.js");
   const { transcribeFile } = await import("./media.js");
   try {
     let last = 0;
     const result = await runIdeasJob(job, {
-      ask: askClaude, transcribe: transcribeFile, tmp: join(DATA, "tmp"),
+      ask: askClaude, askTools: askClaudeTools, transcribe: transcribeFile, tmp: join(DATA, "tmp"),
+      // Fotos de los posts de los creadores: se suben al panel (las de Instagram caducan)
+      saveFile: async (f, name) => {
+        const fd = new FormData();
+        fd.append("name", name);
+        fd.append("file", await openAsBlob(f, { type: "image/jpeg" }), name);
+        return (await call("POST", `/api/worker/ideas/${job.id}/file`, fd)).url;
+      },
       step: (step, progress) => { setBusy(`Claude: ${step}`); if (Date.now() - last > 1500) { last = Date.now(); state({ status: "running", step, progress }); } },
     });
     for (let i = 0; i < 5; i++) {

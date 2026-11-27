@@ -111,6 +111,24 @@ async function askClaudeCli(prompt, { images = [], dir = null, timeoutMs = 8 * 6
   return extractJson(j.result);
 }
 
+/**
+ * Claude con herramientas concretas de tus conectores (p. ej. Composio) permitidas sin preguntar.
+ * Solo en tu PC o en local. Devuelve el JSON de la respuesta.
+ */
+export async function askClaudeTools(prompt, { tools = [], timeoutMs = 6 * 60e3, maxTurns = 10 } = {}) {
+  if (IS_SERVER) throw new NeedLogin();
+  const args = ["-p", "--output-format", "json", "--max-turns", String(maxTurns)];
+  if (tools.length) args.push("--allowedTools", tools.join(","));
+  const r = await runClaude(args, prompt, timeoutMs);
+  let j;
+  try { j = JSON.parse(r.stdout); } catch { throw new Error("Claude no respondió bien: " + (r.stderr || r.stdout).slice(0, 300)); }
+  if (j.is_error) {
+    if (isAuthError(j.result)) { loginCache = { ok: false, at: Date.now() }; throw new NeedLogin(); }
+    throw new Error("Claude: " + String(j.result || j.subtype).slice(0, 300));
+  }
+  return extractJson(j.result);
+}
+
 /* ---------- DeepSeek (sin iniciar sesión: con la clave guardada en la base de datos local) ---------- */
 
 const deepseekKey = () => getSetting("ai:deepseek", null)?.key || process.env.DEEPSEEK_API_KEY || null;

@@ -23,7 +23,7 @@ export type Creator = {
   postCount: number; posts?: IgPost[]; preview?: IgPost[];
 };
 export type IdeasJob = {
-  id: string; kind: "ideas" | "plan" | "script" | "creator"; label: string; status: "queued" | "running" | "done" | "error" | "needs_login" | "cancelled";
+  id: string; kind: "ideas" | "plan" | "script" | "creator" | "fetch"; label: string; status: "queued" | "running" | "done" | "error" | "needs_login" | "cancelled";
   step: string | null; progress: number; error: string | null; ref: string | null; created_at: string; updated_at: string;
 };
 export type Profile = { about: string; audience: string; offer: string; tone: string; goals: string; avoid: string };
@@ -32,7 +32,7 @@ export type Week = { days: WeekDay[]; time: string };
 export type MonthPlan = { summary: string; weeks: { week: number; theme: string; goal: string }[]; at: string };
 export type IdeasState = {
   profile: Profile; week: Week; formats: Record<IdeaFormat, string>;
-  ig: { ready: boolean; account: string | null; why: string | null };
+  ig: { ready: boolean; via: "facebook" | "composio"; account: string | null; why: string | null };
   creators: Creator[]; ideas: Idea[]; jobs: IdeasJob[]; plans: Record<string, MonthPlan>;
 };
 

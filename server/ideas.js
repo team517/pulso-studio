@@ -9,7 +9,15 @@ import { IS_SERVER } from "./config.js";
 import { isWorker } from "./auth.js";
 import { instagramAuth } from "./platforms.js";
 import { FORMATS } from "./ideas-brain.js";
-import { join } from "node:path";
+import { join, basename } from "node:path";
+import { mkdirSync, rmSync, renameSync, copyFileSync } from "node:fs";
+import express from "express";
+import multer from "multer";
+
+/** Fotos de los posts de los creadores (las de Instagram caducan): data/ideas-media/<creador>/<post>.jpg */
+const IDEAS_MEDIA = join(DATA, "ideas-media");
+mkdirSync(IDEAS_MEDIA, { recursive: true });
+const safeName = (n) => basename(String(n || "foto.jpg")).replace(/[^\w.-]+/g, "_").slice(0, 80);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS ideas_creators (
@@ -131,9 +139,20 @@ function creatorOut(c, withPosts = true) {
   };
 }
 
+/** Sin Instagram conectado por Facebook, los posts los lee tu PC con tu Composio (ScrapeCreators). */
+function queueFetch(c) {
+  db.prepare("UPDATE ideas_creators SET status = 'loading', error = NULL WHERE id = ?").run(c.id);
+  try { queue("fetch", `Leer a @${c.username}`, { username: c.username, pages: 3 }, c.id); }
+  catch (e) { if (e.status !== 409) throw e; }
+  return "queued";
+}
+
+async function hasGraph() { try { await igAccess(); return true; } catch { return false; } }
+
 async function refreshCreator(id) {
   const c = db.prepare("SELECT * FROM ideas_creators WHERE id = ?").get(id);
   if (!c) return;
+  if (!(await hasGraph())) return queueFetch(c);
   db.prepare("UPDATE ideas_creators SET status = 'loading', error = NULL WHERE id = ?").run(id);
   try {
     const r = await fetchCreator(c.username);
@@ -151,7 +170,10 @@ async function refreshStale() {
   refreshing = true;
   try {
     const old = new Date(Date.now() - 24 * 3600e3).toISOString();
-    for (const c of db.prepare("SELECT id FROM ideas_creators WHERE status != 'loading' AND (fetched_at IS NULL OR fetched_at < ?)").all(old)) {
+    // Solo los que se leen con Facebook (gratis); los de Composio guardan sus fotos y se actualizan a mano
+    if (!(await hasGraph())) return;
+    for (const c of db.prepare("SELECT id, profile FROM ideas_creators WHERE status != 'loading' AND (fetched_at IS NULL OR fetched_at < ?)").all(old)) {
+      if (parse(c.profile, {}).source === "composio") continue;
       await refreshCreator(c.id).catch(() => {});
     }
   } finally { refreshing = false; }
@@ -255,6 +277,11 @@ function queue(kind, label, input, ref = null) {
 /** Guarda lo que devolvió Claude. */
 function applyResult(job, result) {
   const inp = parse(job.input, {});
+  if (job.kind === "fetch") {
+    db.prepare("UPDATE ideas_creators SET profile = ?, posts = ?, status = 'ready', error = NULL, fetched_at = ? WHERE id = ?")
+      .run(JSON.stringify(result.profile), JSON.stringify(result.posts || []), now(), job.ref);
+    return { creator: job.ref, posts: (result.posts || []).length };
+  }
   if (job.kind === "creator") {
     db.prepare("UPDATE ideas_creators SET analysis = ?, transcripts = ? WHERE id = ?").run(JSON.stringify(result.analysis), JSON.stringify(result.transcripts || []), job.ref);
     return { creator: job.ref };
@@ -293,6 +320,11 @@ function applyResult(job, result) {
   return {};
 }
 
+/** Si falla la lectura de un creador, el motivo se ve en su tarjeta. */
+function jobFailed(job, error) {
+  if (job.kind === "fetch" && job.ref) db.prepare("UPDATE ideas_creators SET status = 'error', error = ? WHERE id = ?").run(String(error || "No se pudo leer").slice(0, 400), job.ref);
+}
+
 export function nextIdeasTask() {
   if (!IS_SERVER) return null;
   const stale = new Date(Date.now() - 25 * 60e3).toISOString();
@@ -314,12 +346,18 @@ async function runLocalQueue() {
   try {
     setJob(j.id, { status: "running", step: "Empezando", progress: 2 });
     const { runIdeasJob } = await import("./ideas-brain.js");
-    const { askClaude, NeedLogin } = await import("./autoedit/brain.js");
+    const { askClaude, askClaudeTools, NeedLogin } = await import("./autoedit/brain.js");
     const { transcribeFile } = await import("./media.js");
     try {
       const result = await runIdeasJob({ id: j.id, kind: j.kind, input: parse(j.input, {}) }, {
-        ask: askClaude, transcribe: transcribeFile, tmp: join(DATA, "tmp"),
+        ask: askClaude, askTools: askClaudeTools, transcribe: transcribeFile, tmp: join(DATA, "tmp"),
         step: (step, progress) => setJob(j.id, { step, progress }),
+        saveFile: async (f, name) => {
+          const dir = join(IDEAS_MEDIA, String(j.ref || "otros"));
+          mkdirSync(dir, { recursive: true });
+          copyFileSync(f, join(dir, safeName(name)));
+          return `/files/ideas/${j.ref || "otros"}/${safeName(name)}?v=${Date.now().toString(36)}`;
+        },
       });
       // Si lo quitaste mientras Claude trabajaba, no se guarda
       if (db.prepare("SELECT status FROM ideas_jobs WHERE id = ?").get(j.id)?.status === "cancelled") return;
@@ -327,6 +365,7 @@ async function runLocalQueue() {
       setJob(j.id, { status: "done", step: "Listo", progress: 100, result: applied });
     } catch (e) {
       console.error("[ideas]", e);
+      jobFailed(j, e instanceof NeedLogin ? "Claude no tiene la sesión iniciada." : e.message);
       setJob(j.id, e instanceof NeedLogin ? { status: "needs_login", step: null, error: "Claude no tiene la sesión iniciada en este ordenador." } : { status: "error", step: null, error: String(e.message || e).slice(0, 500) });
     }
   } finally {
@@ -338,6 +377,7 @@ async function runLocalQueue() {
 /* ---------- Rutas ---------- */
 
 export function registerIdeasRoutes(app, wrap) {
+  app.use("/files/ideas", express.static(IDEAS_MEDIA, { maxAge: "7d" }));
   if (!IS_SERVER) {
     db.prepare("UPDATE ideas_jobs SET status = 'queued', step = 'En cola (se retoma)' WHERE status = 'running'").run();
     setTimeout(runLocalQueue, 3000);
@@ -345,8 +385,9 @@ export function registerIdeasRoutes(app, wrap) {
 
   app.get("/api/ideas/state", wrap(async (req, res) => {
     refreshStale().catch(() => {});
-    let ig = { ready: false, account: null, why: null };
-    try { const a = await igAccess(); ig = { ready: true, account: a.account, why: null }; } catch (e) { ig.why = e.message; }
+    // Con Facebook: Meta (gratis, solo cuentas profesionales). Sin él: tu PC con tu Composio (cualquier cuenta pública)
+    let ig = { ready: true, via: "composio", account: null, why: null };
+    try { const a = await igAccess(); ig = { ready: true, via: "facebook", account: a.account, why: null }; } catch (e) { ig.why = e.message; }
     res.json({
       profile: getProfile(), week: getWeek(), formats: FORMATS, ig,
       creators: db.prepare("SELECT * FROM ideas_creators ORDER BY created_at").all().map((c) => creatorOut(c, false)),
@@ -377,7 +418,6 @@ export function registerIdeasRoutes(app, wrap) {
   app.post("/api/ideas/creators", wrap(async (req, res) => {
     const names = String(req.body?.usernames ?? req.body?.username ?? "").split(/[\s,;]+/).map(cleanUser).filter(Boolean).slice(0, 10);
     if (!names.length) throw err("Escribe el @ de al menos un creador.");
-    await igAccess();
     const out = [];
     for (const u of names) {
       let c = db.prepare("SELECT * FROM ideas_creators WHERE username = ?").get(u);
@@ -397,11 +437,12 @@ export function registerIdeasRoutes(app, wrap) {
     res.json(creatorOut(c));
   }));
   app.post("/api/ideas/creators/:id/refresh", wrap(async (req, res) => {
-    await refreshCreator(req.params.id);
+    try { await refreshCreator(req.params.id); } catch (e) { if (e.status !== 404) throw e; }
     res.json(creatorOut(db.prepare("SELECT * FROM ideas_creators WHERE id = ?").get(req.params.id)));
   }));
   app.delete("/api/ideas/creators/:id", wrap((req, res) => {
     db.prepare("DELETE FROM ideas_creators WHERE id = ?").run(req.params.id);
+    rmSync(join(IDEAS_MEDIA, safeName(req.params.id)), { recursive: true, force: true });
     res.json({ ok: true });
   }));
   app.post("/api/ideas/creators/:id/analyze", wrap((req, res) => {
@@ -493,6 +534,15 @@ export function registerIdeasRoutes(app, wrap) {
   /* El PC (Claude) devuelve el resultado */
   if (IS_SERVER) {
     const guard = (req, res, next) => (isWorker(req) ? next() : res.status(401).json({ error: "Token del PC incorrecto." }));
+    const up = multer({ dest: join(DATA, "tmp"), limits: { fileSize: 20 * 1024 ** 2 } });
+    app.post("/api/worker/ideas/:id/file", guard, up.single("file"), wrap((req, res) => {
+      const j = db.prepare("SELECT * FROM ideas_jobs WHERE id = ?").get(req.params.id);
+      if (!j || !req.file) { if (req.file) rmSync(req.file.path, { force: true }); throw err("Falta el archivo.", 400); }
+      const ref = safeName(j.ref || "otros"), name = safeName(req.body?.name || req.file.originalname);
+      mkdirSync(join(IDEAS_MEDIA, ref), { recursive: true });
+      renameSync(req.file.path, join(IDEAS_MEDIA, ref, name));
+      res.json({ url: `/files/ideas/${ref}/${name}?v=${Date.now().toString(36)}` });
+    }));
     app.post("/api/worker/ideas/:id/state", guard, wrap((req, res) => {
       const j = db.prepare("SELECT * FROM ideas_jobs WHERE id = ?").get(req.params.id);
       if (!j || j.status === "cancelled") return res.json({ gone: true });
@@ -511,6 +561,7 @@ export function registerIdeasRoutes(app, wrap) {
         if ("progress" in b) f.progress = Number(b.progress) || 0;
         if ("error" in b) f.error = b.error ? String(b.error).slice(0, 500) : null;
         setJob(j.id, f);
+        if (f.status === "error" || f.status === "needs_login") jobFailed(j, f.error);
       }
       res.json({ ok: true });
     }));

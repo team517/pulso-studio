@@ -161,6 +161,63 @@ Responde SOLO con JSON:
  "copy": ["qué puedo copiar yo (3-5)"],
  "avoid": ["qué no copiar o no me encaja (1-3)"]}`;
 
+/* ---------- Leer un creador con tu Composio (ScrapeCreators) ----------
+   Claude, en tu PC, ejecuta este código en el «workbench» de Composio con tu conexión (sin claves en Pulso Studio):
+   perfil + hasta 3 páginas de posts y reels (≈ 0,001 $ por consulta). El resultado se sube como archivo a
+   Composio y aquí se descarga, para que Claude no tenga que copiar a mano cientos de enlaces largos. */
+export const COMPOSIO_WORKBENCH = "mcp__claude_ai_composio__COMPOSIO_REMOTE_WORKBENCH";
+
+const fetchCode = (handle, pages) => `import json
+H = ${JSON.stringify(handle)}
+def leer(H, pages=${pages}):
+    r, e = run_composio_tool("SCRAPECREATORS_GET_INSTAGRAM_PROFILE", {"handle": H})
+    if e: return {"error": "perfil: " + str(e)[:300]}
+    d = r.get("data") or {}
+    u = (d.get("data") or {}).get("user") or d.get("user") or {}
+    if not u: return {"error": "No encuentro esa cuenta"}
+    out = {"profile": {"username": u.get("username") or H, "name": u.get("full_name"), "bio": u.get("biography") or "", "followers": u.get("follower_count"),
+           "posts": u.get("timeline_media_count") or u.get("media_count"), "pic": u.get("profile_pic_url_hd") or u.get("profile_pic_url"),
+           "website": u.get("external_url"), "private": bool(u.get("is_private"))}, "posts": []}
+    if u.get("is_private"): return out
+    cur = None
+    for _ in range(pages):
+        a = {"handle": H, "trim": True}
+        if cur: a["next_cursor"] = cur
+        r, e = run_composio_tool("SCRAPECREATORS_LIST_INSTAGRAM_USER_POSTS", a)
+        if e: break
+        d = r.get("data") or {}
+        for it in d.get("items") or []:
+            mt = it.get("media_type"); pt = it.get("product_type") or ""
+            typ = "reel" if pt == "clips" else "video" if mt == 2 else "carrusel" if mt == 8 else "imagen"
+            img = it.get("display_uri") or (((it.get("image_versions2") or {}).get("candidates") or [{}])[0].get("url"))
+            vv = it.get("video_versions") or []
+            code = it.get("code")
+            out["posts"].append({"id": code or str(it.get("id")), "type": typ, "caption": ((it.get("caption") or {}).get("text") or "")[:2000],
+                "likes": it.get("like_count"), "comments": it.get("comment_count"), "views": it.get("play_count") or it.get("ig_play_count"),
+                "url": it.get("url") or ("https://www.instagram.com/p/%s/" % code), "at": it.get("created_at"), "img": img,
+                "video": vv[0].get("url") if vv else None, "duration": it.get("video_duration")})
+        cur = d.get("next_cursor")
+        if not (d.get("more_available") and cur): break
+    return out
+res = leer(H)
+p = "/home/user/pulso_ig_%s.json" % H.replace(".", "_")
+open(p, "w").write(json.dumps(res, ensure_ascii=False))
+up, err = upload_local_file(p)
+print("RESULT_URL=" + (up or {}).get("s3_url", "") if not err else "RESULT_ERROR=" + str(err)[:300])`;
+
+const fetchPrompt = (handle, pages) => `Usa la herramienta COMPOSIO_REMOTE_WORKBENCH de Composio para ejecutar EXACTAMENTE este código Python, sin cambiarlo:
+
+${fetchCode(handle, pages)}
+
+El código imprime una línea «RESULT_URL=…» o «RESULT_ERROR=…».
+Responde SOLO con JSON: {"url": "el enlace que va después de RESULT_URL="} o, si falló, {"error": "el motivo"}.`;
+
+async function downloadFile(url, file) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(60e3) });
+  if (!r.ok || !r.body) throw new Error(`descarga ${r.status}`);
+  await pipeline(Readable.fromWeb(r.body), createWriteStream(file));
+}
+
 /* ---------- Encargos ---------- */
 
 async function downloadTo(url, file) {
@@ -175,8 +232,46 @@ async function downloadTo(url, file) {
  * @param deps  { ask(prompt, opts) → JSON, transcribe(file) → [{w}], step(text, pct), tmp }
  * @returns el resultado que guarda el servidor
  */
-export async function runIdeasJob(job, { ask, transcribe, step, tmp }) {
+export async function runIdeasJob(job, { ask, askTools, transcribe, step, tmp, saveFile }) {
   const inp = job.input || {};
+
+  if (job.kind === "fetch") {
+    const handle = String(inp.username || "").replace(/[^\w.]/g, "");
+    if (!handle) throw new Error("Falta el @ del creador.");
+    if (!askTools) throw new Error("Este equipo no puede usar Composio.");
+    step(`Leyendo a @${handle} con tu Composio`, 15);
+    let r;
+    try { r = await askTools(fetchPrompt(handle, Math.max(1, Math.min(4, inp.pages || 3))), { tools: [COMPOSIO_WORKBENCH], timeoutMs: 6 * 60e3, maxTurns: 8 }); }
+    catch (e) { throw new Error(/sesión|login/i.test(e.message) ? e.message : "No pude usar tu Composio desde el PC: " + e.message); }
+    if (r.error) throw new Error(`Composio: ${String(r.error).slice(0, 200)}`);
+    if (!/^https:\/\/([\w-]+\.)*composio\.dev\//.test(String(r.url || ""))) throw new Error("Composio no devolvió el resultado.");
+    const data = await fetch(r.url, { signal: AbortSignal.timeout(60e3) }).then((x) => x.json());
+    if (data.error) throw new Error(/encuentro/i.test(data.error) ? `No encuentro @${handle} en Instagram.` : "Composio: " + String(data.error).slice(0, 200));
+    const profile = { ...data.profile, source: "composio" };
+    if (profile.private) throw new Error(`@${handle} es una cuenta privada: no se pueden ver sus posts.`);
+    const followers = Number(profile.followers) || 0;
+    const posts = (data.posts || []).map((p) => ({
+      ...p, at: p.at || null,
+      engagement: followers ? Math.round((((p.likes || 0) + 2 * (p.comments || 0)) / followers) * 10000) / 100 : null,
+    }));
+    // Las fotos de Instagram caducan a los pocos días: se guardan en Pulso Studio
+    if (saveFile) {
+      step("Guardando las fotos de sus posts", 70);
+      const dir = join(tmp, "ideas-" + job.id);
+      mkdirSync(dir, { recursive: true });
+      try {
+        const keep = async (url, name) => {
+          if (!url) return null;
+          try { const f = join(dir, name); await downloadFile(url, f); return await saveFile(f, name); } catch { return url; }
+        };
+        profile.pic = await keep(profile.pic, "perfil.jpg");
+        for (let i = 0; i < posts.length; i += 6) {
+          await Promise.all(posts.slice(i, i + 6).map(async (p) => { p.img = await keep(p.img, String(p.id).replace(/[^\w-]/g, "_") + ".jpg"); }));
+        }
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
+    return { profile, posts };
+  }
 
   if (job.kind === "creator") {
     const c = inp.creator;
@@ -192,7 +287,7 @@ export async function runIdeasJob(job, { ask, transcribe, step, tmp }) {
           try {
             const f = join(dir, `${i}.mp4`);
             await downloadTo(p.video, f);
-            const words = await transcribe(f);
+            const words = await transcribe(f, "auto");
             const text = words.map((w) => w.w).join(" ").replace(/\s+([.,!?;:])/g, "$1").trim();
             if (text) transcripts.push({ id: p.id, url: p.url, text });
           } catch (e) { console.error("[ideas] reel sin transcribir:", e.message); }

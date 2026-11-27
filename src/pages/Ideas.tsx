@@ -197,7 +197,7 @@ function Inspiration({ state, reload, onIdeasFromPost }: { state: IdeasState; re
       const r = await ideasApi.addCreators(names);
       const bad = r.filter((c) => c.status === "error");
       if (bad.length) toast(bad.map((c) => c.error).join(" · "), "bad");
-      if (r.length > bad.length) toast(`${r.length - bad.length} creador${r.length - bad.length > 1 ? "es" : ""} añadido${r.length - bad.length > 1 ? "s" : ""}`);
+      if (r.length > bad.length) toast(r.some((c) => c.status === "loading") ? "Añadido: tu PC está leyendo sus posts" : `${r.length - bad.length} creador${r.length - bad.length > 1 ? "es" : ""} añadido${r.length - bad.length > 1 ? "s" : ""}`);
       setNames("");
       reload();
     } catch (e) { toast((e as Error).message, "bad"); }
@@ -206,21 +206,20 @@ function Inspiration({ state, reload, onIdeasFromPost }: { state: IdeasState; re
 
   return (
     <>
-      {!state.ig.ready && (
-        <div className="note note--warn id-ig">
-          <Instagram size={16} />
-          <span>{state.ig.why || "Conecta tu Instagram para ver los posts de otros creadores."}</span>
-          <button className="btn btn--sm" onClick={() => navigate("/conexiones")}>Ir a Conexiones</button>
-        </div>
-      )}
+      <div className="note id-ig">
+        <Instagram size={16} />
+        {state.ig.via === "facebook"
+          ? <span>Los posts se leen con tu Instagram conectado ({state.ig.account}), gratis. Solo cuentas profesionales o de creador.</span>
+          : <span>Los posts se leen con <b>tu Composio</b> desde tu PC: cualquier cuenta pública, con posts y reels (unos 0,002 $ por creador cada vez que se lee). Hace falta que tu PC esté encendido.</span>}
+      </div>
       <div className="card id-add">
         <div>
           <h3><AtSign size={16} /> Creadores que te inspiran</h3>
-          <p className="muted">Escribe su @ (puedes poner varios separados por comas). Ves sus posts con visitas, likes y comentarios, y Claude estudia qué les funciona para tus ideas. Solo cuentas profesionales o de creador (así lo permite Instagram).</p>
+          <p className="muted">Escribe su @ (puedes poner varios separados por comas). Ves sus posts con visitas, likes y comentarios, y Claude estudia qué les funciona para tus ideas.</p>
         </div>
         <div className="row">
-          <input className="input" placeholder="@creador1, @creador2" value={names} onChange={(e) => setNames(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} disabled={!state.ig.ready} />
-          <button className="btn btn--primary" disabled={!names.trim() || adding || !state.ig.ready} onClick={add}>{adding ? <Loader2 size={15} className="spin" /> : <Plus size={15} />} Añadir</button>
+          <input className="input" placeholder="@creador1, @creador2" value={names} onChange={(e) => setNames(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+          <button className="btn btn--primary" disabled={!names.trim() || adding} onClick={add}>{adding ? <Loader2 size={15} className="spin" /> : <Plus size={15} />} Añadir</button>
         </div>
       </div>
 
@@ -245,6 +244,7 @@ function Avatar({ c, size = 46 }: { c: Creator; size?: number }) {
 
 function CreatorCard({ c, jobs, onOpen, reload, toast }: { c: Creator; jobs: IdeasState["jobs"]; onOpen: () => void; reload: () => void; toast: ReturnType<typeof useToast> }) {
   const studying = jobs.find((j) => j.kind === "creator" && j.ref === c.id && (j.status === "queued" || j.status === "running"));
+  const reading = jobs.find((j) => j.kind === "fetch" && j.ref === c.id && (j.status === "queued" || j.status === "running"));
   return (
     <article className="card id-creator">
       <div className="id-creator__head">
@@ -255,7 +255,7 @@ function CreatorCard({ c, jobs, onOpen, reload, toast }: { c: Creator; jobs: Ide
         </div>
         <a className="btn btn--ghost btn--icon btn--sm" href={`https://www.instagram.com/${c.username}/`} target="_blank" rel="noreferrer" title="Abrir en Instagram"><ExternalLink size={14} /></a>
       </div>
-      {c.status === "loading" && <p className="muted"><Loader2 size={13} className="spin" /> Leyendo sus posts…</p>}
+      {c.status === "loading" && <p className="muted"><Loader2 size={13} className="spin" /> {reading?.step || "Leyendo sus posts…"}{reading?.status === "queued" && IN_PANEL ? " (en cuanto tu PC esté encendido)" : ""}</p>}
       {c.status === "error" && <p className="id-err">{c.error}</p>}
       {c.status === "ready" && (
         <button className="id-creator__thumbs" onClick={onOpen} title="Ver sus posts">
