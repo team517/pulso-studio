@@ -240,3 +240,8 @@
   .id-script__row { grid-template-columns: 1fr; gap: 4px; }
   .id-search { margin-left: 0; }
 }
+
+.id-trash { color: var(--ink-4); }
+.id-trash:hover { color: var(--bad); }
+.id-card__sched { align-self: flex-start; margin-top: 2px; }
+.id-card__date { text-transform: none; }

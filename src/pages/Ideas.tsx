@@ -2,11 +2,11 @@
 // y lo que Claude tiene que saber de ti para escribir como tú.
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AtSign, BarChart3, Eye, ExternalLink, Film, Heart, Image as ImageIcon, Instagram, Lightbulb, Loader2, MessageCircle,
+  AtSign, BarChart3, CalendarPlus, Eye, ExternalLink, Film, Heart, Image as ImageIcon, Instagram, Lightbulb, Loader2, MessageCircle,
   Monitor, Plus, RefreshCw, Search, Sparkles, Star, Trash2, User, Video, Wand2,
 } from "lucide-react";
 import {
-  ideasApi, useIdeas, fmtNum, hookOf, ANGLE_LABEL, PILLAR_LABEL, STATUS_LABEL,
+  ideasApi, useIdeas, fmtNum, hookOf, dayLabel, ANGLE_LABEL, PILLAR_LABEL, STATUS_LABEL,
   type Creator, type Idea, type IdeaFormat, type IdeasState, type IgPost, type Profile,
 } from "../ideas-api";
 import IdeaDetail, { FormatBadge, JobsBar } from "./IdeaDetail";
@@ -130,6 +130,16 @@ function IdeasTab({ state, onOpen, onGenerate, onChanged }: { state: IdeasState;
           <button className={fmt === "pantalla" ? "is-on" : ""} onClick={() => setFmt("pantalla")}><Monitor size={13} /> Pantalla</button>
         </div>
         <label className="id-search"><Search size={14} /><input className="input input--sm" placeholder="Buscar" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        {filter === "todas" && state.ideas.some((i) => i.status === "idea") && (
+          <button className="btn btn--sm btn--primary" title="Reparte todas las ideas por usar de lunes a viernes, una por día libre" onClick={async () => {
+            try {
+              const r = await ideasApi.scheduleAll();
+              const n = r.scheduled.length;
+              toast(n ? `${n} idea${n > 1 ? "s" : ""} programada${n > 1 ? "s" : ""}: del ${dayLabel(r.scheduled[0].date)} al ${dayLabel(r.scheduled[n - 1].date)}` : "No había ideas por programar");
+              onChanged();
+            } catch (e) { toast((e as Error).message, "bad"); }
+          }}><CalendarPlus size={14} /> Programar todas</button>
+        )}
       </div>
       {!list.length ? <p className="muted id-none">No hay ideas con este filtro.</p> : (
         <div className="id-grid">
@@ -141,6 +151,15 @@ function IdeasTab({ state, onOpen, onGenerate, onChanged }: { state: IdeasState;
                 <span className="spacer" />
                 <button className={"btn btn--ghost btn--icon btn--sm id-star" + (i.favorite ? " is-on" : "")} title="Favorita"
                   onClick={(e) => { e.stopPropagation(); ideasApi.update(i.id, { favorite: !i.favorite }).then(onChanged).catch((er) => toast(er.message, "bad")); }}><Star size={15} /></button>
+                <button className="btn btn--ghost btn--icon btn--sm id-trash" title={i.status === "descartada" ? "Borrar para siempre" : "Descartar"}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      if (i.status === "descartada") { if (!confirm(`¿Borrar «${i.title}» para siempre?`)) return; await ideasApi.remove(i.id); toast("Idea borrada"); }
+                      else { await ideasApi.update(i.id, { status: "descartada", date: null }); toast("Movida a Descartadas"); }
+                      onChanged();
+                    } catch (er) { toast((er as Error).message, "bad"); }
+                  }}><Trash2 size={15} /></button>
               </div>
               <h3>{i.title}</h3>
               <p className="id-card__hook">«{hookOf(i)}»</p>
@@ -151,6 +170,13 @@ function IdeasTab({ state, onOpen, onGenerate, onChanged }: { state: IdeasState;
                 {i.date && <span className="id-card__date">{new Date(i.date + "T12:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</span>}
                 {i.needsScript && <span className="id-card__warn">sin guion</span>}
               </div>
+              {i.status !== "publicada" && (
+                <button className={"btn btn--sm id-card__sched" + (i.date ? "" : " btn--primary")} onClick={async (e) => {
+                  e.stopPropagation();
+                  try { const r = await ideasApi.schedule(i.id); toast(`«${r.title}» programada el ${dayLabel(r.date!)}`); onChanged(); }
+                  catch (er) { toast((er as Error).message, "bad"); }
+                }}><CalendarPlus size={14} /> {i.date ? "Mover al siguiente día libre" : "Programar"}</button>
+              )}
             </article>
           ))}
         </div>

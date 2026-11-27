@@ -58,6 +58,8 @@ export const ideasApi = {
     req<IdeasJob>("POST", "/api/ideas/generate", o),
   update: (id: string, f: Partial<Pick<Idea, "status" | "date" | "favorite" | "notes" | "title">> & { data?: Partial<Idea> }) => req<Idea>("PATCH", `/api/ideas/${id}`, f),
   remove: (id: string) => req<{ ok: true }>("DELETE", `/api/ideas/${id}`),
+  schedule: (id: string) => req<Idea>("POST", `/api/ideas/${id}/schedule`),
+  scheduleAll: () => req<{ scheduled: { id: string; title: string; date: string }[] }>("POST", "/api/ideas/schedule-all"),
   rewrite: (id: string, request: string) => req<IdeasJob>("POST", `/api/ideas/${id}/rewrite`, { request }),
   plan: (month: string, replace: boolean) => req<IdeasJob>("POST", "/api/ideas/plan", { month, replace }),
   cancelJob: (id: string) => req<{ ok: true }>("DELETE", `/api/ideas/jobs/${id}`),
@@ -97,3 +99,6 @@ export function scriptText(i: Idea) {
   const screen = i.screen?.length ? `\n\nGRABACIÓN DE PANTALLA\n${i.screen.map((s, k) => `${k + 1}. ${s}`).join("\n")}` : "";
   return `${i.title}\n\nGANCHO: ${i.hook || ""}\n\n${parts}${screen}\n\nDESCRIPCIÓN\n${i.caption || ""}\n${(i.hashtags || []).map((h) => "#" + h).join(" ")}`;
 }
+
+/** «miércoles 3 dic» */
+export const dayLabel = (iso: string) => new Date(iso + "T12:00").toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "short" });

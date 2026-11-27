@@ -202,6 +202,30 @@ function updateIdeaContent(id, idea) {
   db.prepare("UPDATE ideas SET title = ?, format = ?, data = ?, updated_at = ? WHERE id = ?").run(title, format, JSON.stringify({ ...parse(cur.data, {}), ...data, needsScript: false }), now(), id);
 }
 
+/* ---------- Programar: siguiente día libre de lunes a viernes ---------- */
+
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * Siguiente día libre (sin otra pieza ese día) de lunes a viernes, empezando mañana.
+ * Prefiere el día que en tu semana toca ese formato (cámara o pantalla); si no hay en 3 semanas, el primer día libre.
+ */
+function nextFreeDay(format, taken) {
+  const week = getWeek();
+  const days = [];
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  for (let i = 1; days.length < 90 && i < 200; i++) {
+    const x = new Date(d); x.setDate(d.getDate() + i);
+    const dow = x.getDay();
+    if (dow === 0 || dow === 6) continue;          // vídeos de lunes a viernes
+    const iso = ymd(x);
+    if (taken.has(iso)) continue;
+    days.push({ iso, type: week.days.find((w) => w.dow === dow)?.type });
+  }
+  return (days.slice(0, 15).find((x) => x.type === format) || days[0])?.iso || null;
+}
+const takenDays = () => new Set(db.prepare("SELECT date FROM ideas WHERE date IS NOT NULL AND status != 'descartada'").all().map((r) => r.date));
+
 /* ---------- Contexto para Claude ---------- */
 
 function weekText() {
@@ -492,6 +516,31 @@ export function registerIdeasRoutes(app, wrap) {
     if (k.length) db.prepare(`UPDATE ideas SET ${k.map((x) => x + " = ?").join(", ")}, updated_at = ? WHERE id = ?`).run(...k.map((x) => f[x]), now(), r.id);
     res.json(ideaOut(db.prepare("SELECT * FROM ideas WHERE id = ?").get(r.id)));
   }));
+  // Programar una idea: al siguiente día libre de lunes a viernes
+  app.post("/api/ideas/:id/schedule", wrap((req, res) => {
+    const r = db.prepare("SELECT * FROM ideas WHERE id = ?").get(req.params.id);
+    if (!r) throw err("No encuentro esa idea.", 404);
+    const taken = takenDays();
+    if (r.date) taken.delete(r.date);
+    const date = nextFreeDay(r.format, taken);
+    db.prepare("UPDATE ideas SET date = ?, status = CASE WHEN status IN ('idea', 'descartada') THEN 'plan' ELSE status END, updated_at = ? WHERE id = ?").run(date, now(), r.id);
+    res.json(ideaOut(db.prepare("SELECT * FROM ideas WHERE id = ?").get(r.id)));
+  }));
+  // Programar todas las ideas por usar (favoritas primero), una por día libre
+  app.post("/api/ideas/schedule-all", wrap((req, res) => {
+    const taken = takenDays();
+    const list = db.prepare("SELECT * FROM ideas WHERE status = 'idea' ORDER BY favorite DESC, created_at").all();
+    const out = [];
+    for (const r of list) {
+      const date = nextFreeDay(r.format, taken);
+      if (!date) break;
+      taken.add(date);
+      db.prepare("UPDATE ideas SET date = ?, status = 'plan', updated_at = ? WHERE id = ?").run(date, now(), r.id);
+      out.push({ id: r.id, title: r.title, date });
+    }
+    res.json({ scheduled: out });
+  }));
+
   app.delete("/api/ideas/:id", wrap((req, res) => {
     db.prepare("DELETE FROM ideas WHERE id = ?").run(req.params.id);
     res.json({ ok: true });
