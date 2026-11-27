@@ -206,23 +206,17 @@ function updateIdeaContent(id, idea) {
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/**
- * Siguiente día libre (sin otra pieza ese día) de lunes a viernes, empezando mañana.
- * Prefiere el día que en tu semana toca ese formato (cámara o pantalla); si no hay en 3 semanas, el primer día libre.
- */
+/** Primer día libre (sin otra pieza ese día) de lunes a viernes, empezando hoy. Sencillo: sin saltarse días. */
 function nextFreeDay(format, taken) {
-  const week = getWeek();
-  const days = [];
   const d = new Date(); d.setHours(12, 0, 0, 0);
-  for (let i = 1; days.length < 90 && i < 200; i++) {
+  for (let i = 0; i < 400; i++) {
     const x = new Date(d); x.setDate(d.getDate() + i);
     const dow = x.getDay();
     if (dow === 0 || dow === 6) continue;          // vídeos de lunes a viernes
     const iso = ymd(x);
-    if (taken.has(iso)) continue;
-    days.push({ iso, type: week.days.find((w) => w.dow === dow)?.type });
+    if (!taken.has(iso)) return iso;
   }
-  return (days.slice(0, 15).find((x) => x.type === format) || days[0])?.iso || null;
+  return null;
 }
 const takenDays = () => new Set(db.prepare("SELECT date FROM ideas WHERE date IS NOT NULL AND status != 'descartada'").all().map((r) => r.date));
 
