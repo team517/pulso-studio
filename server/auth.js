@@ -1,7 +1,10 @@
 // Acceso en modo servidor: una sola cuenta, la del dueño (STUDIO_OWNER, por defecto team@onepulso.online).
 // La contraseña la crea el propio dueño la primera vez que abre la web (nunca está en el código ni en EasyPanel):
-// se guarda cifrada (scrypt) en la base de datos. La sesión dura 180 días si marcas «Mantener la sesión».
-import { scryptSync, randomBytes } from "node:crypto";
+// se guarda cifrada (scrypt) en la base de datos. Con «Mantener la sesión» dura 180 días y se renueva sola
+// cada vez que entras, así que no caduca mientras la uses.
+// La sesión se firma con una clave que sale de tu cuenta (no de un archivo del servidor): si el panel se vacía al
+// implementar y tu PC le devuelve la cuenta, la sesión que tenías abierta vuelve a valer sola.
+import { scryptSync, randomBytes, createHash, createHmac } from "node:crypto";
 import { IS_SERVER, BASE, WORKER_TOKEN, sign, safeEqual, checkSignedPath, restoreSecret } from "./config.js";
 import { getSetting, setSetting, PERSISTENT } from "./db.js";
 
@@ -23,20 +26,27 @@ const owner = () => getSetting("auth:owner", null);
 export function sessionOf(req) {
   const v = readCookie(req);
   const [payload, sig] = v.split(".");
-  if (!payload || !sig || !safeEqual(sig, sign(payload))) return null;
+  const o = owner();
+  if (!payload || !sig || !o) return null;
+  // Firma con la clave de tu cuenta (la nueva) o con la del servidor (sesiones de antes de este cambio)
+  const legacy = !safeEqual(sig, signFor(o, payload));
+  if (legacy && !safeEqual(sig, sign(payload))) return null;
   try {
     const s = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    const o = owner();
     // Al cambiar la contraseña se cierran todas las sesiones anteriores
-    return s.exp > Date.now() / 1000 && o && s.email === o.email && s.ver === o.ver ? s : null;
+    return s.exp > Date.now() / 1000 && s.email === o.email && s.ver === o.ver ? { ...s, legacy } : null;
   } catch { return null; }
 }
 
+/** Clave de las sesiones: sale de tu cuenta (sal + contraseña cifrada + versión), igual en cualquier servidor que la tenga. */
+const accountKey = (o) => createHash("sha256").update(`pulso-sesion|${o.email}|${o.salt}|${o.hash}|${o.ver}`).digest();
+const signFor = (o, payload) => createHmac("sha256", accountKey(o)).update(payload).digest("base64url");
+
 function setSession(res, o, remember) {
   const secs = remember ? LONG_DAYS * 86400 : 12 * 3600;
-  const payload = Buffer.from(JSON.stringify({ email: o.email, ver: o.ver, exp: Math.floor(Date.now() / 1000) + secs })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ email: o.email, ver: o.ver, exp: Math.floor(Date.now() / 1000) + secs, keep: !!remember })).toString("base64url");
   // Sin «mantener», cookie de sesión (se borra al cerrar el navegador)
-  res.setHeader("Set-Cookie", `${COOKIE}=${payload}.${sign(payload)}; Path=${BASE || "/"}${remember ? `; Max-Age=${secs}` : ""}; HttpOnly; Secure; SameSite=Lax`);
+  res.setHeader("Set-Cookie", `${COOKIE}=${payload}.${signFor(o, payload)}; Path=${BASE || "/"}${remember ? `; Max-Age=${secs}` : ""}; HttpOnly; Secure; SameSite=Lax`);
 }
 
 const hashOf = (password, salt) => scryptSync(password, salt, 64).toString("base64url");
@@ -75,6 +85,20 @@ export function registerAuth(app) {
     restoreSecret(req.body?.secret);
     console.log("[auth] Cuenta recuperada desde tu PC");
     res.json({ ok: true });
+  });
+
+  // Cambiar la contraseña desde tu PC («Cambiar contraseña.cmd»): lo pide el editor con su clave de PC.
+  // Cierra las demás sesiones (cambia la versión) y tu PC guarda la cuenta nueva en su copia.
+  app.post("/api/worker/owner/password", (req, res) => {
+    if (!isWorker(req)) return res.status(401).json({ error: "Token del PC incorrecto." });
+    const password = String(req.body?.password || "");
+    if (password.length < 8) return res.status(400).json({ error: "La contraseña tiene que tener al menos 8 caracteres." });
+    const cur = owner();
+    const salt = randomBytes(16).toString("base64url");
+    const o = { email: OWNER, salt, hash: hashOf(password, salt), ver: (Number(cur?.ver) || 0) + 1, at: new Date().toISOString() };
+    setSetting("auth:owner", o);
+    console.log(`[auth] Contraseña cambiada desde tu PC para ${OWNER}`);
+    res.json({ ok: true, email: OWNER });
   });
 
   // Primera vez: el dueño crea su contraseña (solo se puede mientras no exista ninguna)
@@ -118,7 +142,14 @@ export function registerAuth(app) {
     const p = req.path;
     if (!/^\/(api|files)\//.test(p)) return next(); // la web en sí (HTML, JS, CSS) se carga sin sesión
     if (OPEN.some((rx) => rx.test(p))) return next();
-    if (sessionOf(req) || isWorker(req)) return next();
+    const ses = sessionOf(req);
+    if (ses) {
+      // «Mantener la sesión»: se renueva sola (como mucho una vez al día) y nunca caduca mientras la uses
+      const keep = ses.keep !== false && ses.exp - Date.now() / 1000 > 13 * 3600;
+      if (keep && (ses.legacy || ses.exp - Date.now() / 1000 < (LONG_DAYS - 1) * 86400)) setSession(res, owner(), true);
+      return next();
+    }
+    if (isWorker(req)) return next();
     // Enlace firmado (Meta descargando un vídeo para publicarlo)
     if (req.method === "GET" && p.startsWith("/files/") && checkSignedPath(BASE + p, req.query.exp, req.query.sig)) return next();
     res.status(401).json({ error: "Sin sesión", code: "no_session" });

@@ -111,6 +111,7 @@ function Gate() {
             {creating && <input className="input" type="password" autoComplete="new-password" placeholder="Repite la contraseña" value={repeat} onChange={(e) => setRepeat(e.target.value)} required autoFocus={noCopy} />}
             <label className="gate__remember"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Mantener la sesión iniciada</label>
             {err && <p className="gate__err">{err}</p>}
+            {/incorrect/i.test(err) && <p className="gate__wait">¿No te deja entrar? En tu PC, abre <b>«Cambiar contraseña»</b> (en la carpeta de Pulso Studio), pon una nueva y entra con ella.</p>}
             {st.needsSetup && !creating && (waiting
               ? <p className="gate__wait">Entrando…</p>
               : null)}
