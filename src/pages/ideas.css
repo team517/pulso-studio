@@ -118,7 +118,9 @@
 .id-add p { margin: 6px 0 0; font-size: 13px; max-width: 760px; }
 .id-add .input { flex: 1; }
 .id-creators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
-.id-creator { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.id-creator { position: relative; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; transition: border-color 0.3s, box-shadow 0.3s; }
+.id-creator.is-new { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 40px -10px rgba(124, 92, 255, 0.6); }
+.id-creator__new { position: absolute; top: -9px; right: 14px; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 6px; background: var(--accent); color: #fff; }
 .id-creator__head { display: flex; align-items: center; gap: 10px; }
 .id-creator__who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .id-creator__who span { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -150,7 +152,8 @@
 .id-post__top { position: absolute; top: 6px; left: 6px; font-size: 10.5px; font-weight: 800; padding: 2px 6px; border-radius: 5px; background: var(--warn); color: #1a1405; }
 .id-post__stats { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; justify-content: center; padding: 18px 4px 6px; font-size: 11px; font-weight: 600; color: #fff;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.8)); }
-.id-post__stats span { display: inline-flex; align-items: center; gap: 3px; }
+.id-post__stats span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+@media (max-width: 1100px) { .id-post__stats { gap: 6px; font-size: 10px; } }
 .id-sel { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .id-sel .id-caption { max-height: 220px; overflow: auto; margin: 0; }
 

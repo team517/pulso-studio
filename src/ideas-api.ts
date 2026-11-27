@@ -20,7 +20,7 @@ export type Creator = {
   id: string; username: string; status: "loading" | "ready" | "error"; error: string | null; fetched_at: string | null;
   profile: { username: string; name: string | null; bio: string; followers: number | null; posts: number | null; pic: string | null; website: string | null } | null;
   analysis: CreatorAnalysis | null; transcripts: { id: string; url: string; text: string }[];
-  postCount: number; posts?: IgPost[]; preview?: IgPost[];
+  postCount: number; reelCount?: number; posts?: IgPost[]; preview?: IgPost[];
 };
 export type IdeasJob = {
   id: string; kind: "ideas" | "plan" | "script" | "creator" | "fetch"; label: string; status: "queued" | "running" | "done" | "error" | "needs_login" | "cancelled";
@@ -71,9 +71,9 @@ export function useIdeas() {
   const load = useCallback(() => ideasApi.state().then((s) => { setState(s); setError(null); }).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
   const busy = !!state && (state.jobs.some((j) => j.status === "queued" || j.status === "running") || state.creators.some((c) => c.status === "loading"));
+  // Mientras tu PC trabaja, cada 2,5 s; si no, cada 15 s (para ver lo que termina o cambia en otra pestaña)
   useEffect(() => {
-    if (!busy) return;
-    const t = setInterval(load, 2500);
+    const t = setInterval(load, busy ? 2500 : 15000);
     return () => clearInterval(t);
   }, [busy, load]);
   return { state, error, reload: load, setState };

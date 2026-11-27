@@ -130,12 +130,15 @@ async function fetchCreator(username) {
 const score = (p) => (p.views ?? 0) / 50 + (p.likes ?? 0) + 2 * (p.comments ?? 0);
 export const topPosts = (posts, n) => [...posts].sort((a, b) => score(b) - score(a)).slice(0, n);
 
+const reels = (posts) => posts.filter((p) => p.type === "reel" || p.type === "video");
+
 function creatorOut(c, withPosts = true) {
   const posts = parse(c.posts, []);
   return {
     id: c.id, username: c.username, status: c.status, error: c.error, fetched_at: c.fetched_at, created_at: c.created_at,
     profile: parse(c.profile, null), analysis: parse(c.analysis, null), transcripts: parse(c.transcripts, []),
-    postCount: posts.length, ...(withPosts ? { posts } : { preview: topPosts(posts, 3) }),
+    postCount: posts.length, reelCount: reels(posts).length,
+    ...(withPosts ? { posts } : { preview: topPosts(reels(posts).length ? reels(posts) : posts, 3) }),
   };
 }
 

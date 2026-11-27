@@ -1,6 +1,6 @@
 // Ideas de contenido: las ideas con su guion, los creadores que te inspiran (sus posts de Instagram)
 // y lo que Claude tiene que saber de ti para escribir como tú.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AtSign, BarChart3, Eye, ExternalLink, Film, Heart, Image as ImageIcon, Instagram, Lightbulb, Loader2, MessageCircle,
   Monitor, Plus, RefreshCw, Search, Sparkles, Star, Trash2, User, Video, Wand2,
@@ -22,6 +22,35 @@ export default function Ideas() {
   const [generating, setGenerating] = useState<{ post?: { creatorId: string; postId: string; label: string } } | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = state?.ideas.find((i) => i.id === openId) ?? null;
+  const toast = useToast();
+  const [fresh, setFresh] = useState<string[]>([]);
+  // Avisos: un creador termina de cargarse (o falla), o termina su estudio
+  const seen = useRef<{ c: Record<string, string>; j: Record<string, string> } | null>(null);
+  useEffect(() => {
+    if (!state) return;
+    const c = Object.fromEntries(state.creators.map((x) => [x.id, x.status]));
+    const j = Object.fromEntries(state.jobs.map((x) => [x.id, x.status]));
+    const prev = seen.current;
+    seen.current = { c, j };
+    if (!prev) return;
+    for (const x of state.creators) {
+      if (prev.c[x.id] !== "loading") continue;
+      if (x.status === "ready") {
+        const r = x.reelCount ?? 0;
+        toast(`@${x.username} ya está cargado: ${r ? `${r} reels` : `${x.postCount} posts`}. Pulsa «Ver ${r ? "reels" : "posts"}» en su tarjeta.`);
+        setFresh((f) => [...new Set([...f, x.id])]);
+        setTab("inspiracion");
+      } else if (x.status === "error") toast(`@${x.username}: ${x.error || "no se pudo leer"}`, "bad");
+    }
+    for (const x of state.jobs) {
+      if (x.status === "done" && prev.j[x.id] && prev.j[x.id] !== "done") {
+        if (x.kind === "creator") { toast(`${x.label}: listo. Ya tienes sus ganchos, estructuras y temas.`); if (x.ref) setFresh((f) => [...new Set([...f, x.ref!])]); }
+        else if (x.kind === "ideas") toast(`${x.label}: listas en «Ideas».`);
+        else if (x.kind === "plan") toast(`${x.label}: listo en «Mi semana».`);
+      }
+      if (x.status === "error" && prev.j[x.id] && prev.j[x.id] !== "error") toast(`${x.label}: ${x.error || "falló"}`, "bad");
+    }
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!state) return <div className="page"><p className="muted">{error ? error : "Cargando…"}</p></div>;
   const live = state.ideas.filter((i) => i.status !== "descartada").length;
@@ -48,7 +77,7 @@ export default function Ideas() {
       </div>
 
       {tab === "ideas" && <IdeasTab state={state} onOpen={setOpenId} onGenerate={() => setGenerating({})} onChanged={reload} />}
-      {tab === "inspiracion" && <Inspiration state={state} reload={reload} onIdeasFromPost={(post) => setGenerating({ post })} />}
+      {tab === "inspiracion" && <Inspiration state={state} reload={reload} fresh={fresh} onSeen={(id) => setFresh((f) => f.filter((x) => x !== id))} onIdeasFromPost={(post) => setGenerating({ post })} />}
       {tab === "perfil" && <ProfileTab profile={state.profile} onSaved={(p) => setState({ ...state, profile: p })} />}
 
       {generating && <GenerateModal state={state} post={generating.post} onClose={() => setGenerating(null)} onQueued={() => { setGenerating(null); setTab("ideas"); reload(); }} />}
@@ -184,7 +213,7 @@ function GenerateModal({ state, post, onClose, onQueued }: { state: IdeasState; 
 
 /* ---------- Inspiración: creadores de Instagram ---------- */
 
-function Inspiration({ state, reload, onIdeasFromPost }: { state: IdeasState; reload: () => void; onIdeasFromPost: (p: { creatorId: string; postId: string; label: string }) => void }) {
+function Inspiration({ state, reload, fresh, onSeen, onIdeasFromPost }: { state: IdeasState; reload: () => void; fresh: string[]; onSeen: (id: string) => void; onIdeasFromPost: (p: { creatorId: string; postId: string; label: string }) => void }) {
   const toast = useToast();
   const [names, setNames] = useState("");
   const [adding, setAdding] = useState(false);
@@ -225,7 +254,7 @@ function Inspiration({ state, reload, onIdeasFromPost }: { state: IdeasState; re
 
       {state.creators.length ? (
         <div className="id-creators">
-          {state.creators.map((c) => <CreatorCard key={c.id} c={c} jobs={state.jobs} onOpen={() => setOpenId(c.id)} reload={reload} toast={toast} />)}
+          {state.creators.map((c) => <CreatorCard key={c.id} c={c} jobs={state.jobs} isNew={fresh.includes(c.id)} onOpen={() => { onSeen(c.id); setOpenId(c.id); }} reload={reload} toast={toast} />)}
         </div>
       ) : <p className="muted id-none">Aún no has añadido creadores.</p>}
 
@@ -242,11 +271,13 @@ function Avatar({ c, size = 46 }: { c: Creator; size?: number }) {
     : <span className="id-av id-av--none" style={{ width: size, height: size }}>{c.username.slice(0, 1).toUpperCase()}</span>;
 }
 
-function CreatorCard({ c, jobs, onOpen, reload, toast }: { c: Creator; jobs: IdeasState["jobs"]; onOpen: () => void; reload: () => void; toast: ReturnType<typeof useToast> }) {
+function CreatorCard({ c, jobs, isNew, onOpen, reload, toast }: { c: Creator; jobs: IdeasState["jobs"]; isNew?: boolean; onOpen: () => void; reload: () => void; toast: ReturnType<typeof useToast> }) {
+  const nReels = c.reelCount ?? 0;
   const studying = jobs.find((j) => j.kind === "creator" && j.ref === c.id && (j.status === "queued" || j.status === "running"));
   const reading = jobs.find((j) => j.kind === "fetch" && j.ref === c.id && (j.status === "queued" || j.status === "running"));
   return (
-    <article className="card id-creator">
+    <article className={"card id-creator" + (isNew ? " is-new" : "")}>
+      {isNew && <span className="id-creator__new">Listo</span>}
       <div className="id-creator__head">
         <Avatar c={c} />
         <div className="id-creator__who">
@@ -260,13 +291,13 @@ function CreatorCard({ c, jobs, onOpen, reload, toast }: { c: Creator; jobs: Ide
       {c.status === "ready" && (
         <button className="id-creator__thumbs" onClick={onOpen} title="Ver sus posts">
           {(c.preview || []).map((p) => <Thumb key={p.id} p={p} />)}
-          <span className="id-creator__more">{c.postCount} posts</span>
+          <span className="id-creator__more">{nReels ? <>{nReels} reels<br /></> : null}{c.postCount - nReels} posts</span>
         </button>
       )}
       {studying ? <p className="id-creator__an muted"><Loader2 size={13} className="spin" /> {studying.step || "En cola"}</p>
         : c.analysis ? <p className="id-creator__an"><Sparkles size={13} /> {c.analysis.summary}</p> : null}
       <div className="row id-creator__actions">
-        <button className="btn btn--sm" disabled={c.status !== "ready"} onClick={onOpen}><Eye size={14} /> Ver posts</button>
+        <button className={"btn btn--sm" + (isNew ? " btn--primary" : "")} disabled={c.status !== "ready"} onClick={onOpen}><Eye size={14} /> {nReels ? "Ver reels" : "Ver posts"}</button>
         <button className="btn btn--sm" disabled={c.status !== "ready" || !!studying} title="Claude escucha sus mejores reels y saca sus ganchos y estructuras"
           onClick={() => ideasApi.analyzeCreator(c.id).then(() => { toast("Claude va a estudiar sus mejores reels"); reload(); }).catch((e) => toast(e.message, "bad"))}>
           <BarChart3 size={14} /> {c.analysis ? "Estudiar" : "Estudiar a fondo"}
@@ -293,9 +324,10 @@ function CreatorModal({ id, jobs, onClose, reload, onIdeas }: { id: string; jobs
   const toast = useToast();
   const [c, setC] = useState<Creator | null>(null);
   const [sort, setSort] = useState<keyof typeof SORTS>("best");
-  const [type, setType] = useState<"all" | "video" | "foto">("all");
+  const [type, setType] = useState<"all" | "video" | "foto">("video");
   const [sel, setSel] = useState<IgPost | null>(null);
-  useEffect(() => { ideasApi.creator(id).then(setC).catch((e) => toast(e.message, "bad")); }, [id, toast]);
+  // Reels primero; si no tiene reels, todo
+  useEffect(() => { ideasApi.creator(id).then((x) => { setC(x); if (!(x.posts || []).some((p) => p.type === "reel" || p.type === "video")) setType("all"); }).catch((e) => toast(e.message, "bad")); }, [id, toast]);
   const studying = jobs.find((j) => j.kind === "creator" && j.ref === id && (j.status === "queued" || j.status === "running"));
   const posts = useMemo(() => {
     const s = (p: IgPost) => (p.views ?? 0) / 50 + (p.likes ?? 0) + 2 * (p.comments ?? 0);
@@ -313,35 +345,14 @@ function CreatorModal({ id, jobs, onClose, reload, onIdeas }: { id: string; jobs
           <span><b>{fmtNum(c.profile?.posts)}</b> publicaciones</span>
           {c.profile?.bio && <p className="muted">{c.profile.bio}</p>}
         </div>
-        {c.analysis ? (
-          <section className="id-an">
-            <h4 className="id-h"><Sparkles size={15} /> Qué le funciona</h4>
-            <p className="id-p">{c.analysis.summary}</p>
-            <div className="id-cols">
-              <div><span className="id-k">Ganchos</span><ul className="id-list">{c.analysis.hooks.map((h, k) => <li key={k}>{h}</li>)}</ul></div>
-              <div><span className="id-k">Estructuras</span><ul className="id-list">{c.analysis.structures.map((h, k) => <li key={k}>{h}</li>)}</ul></div>
-            </div>
-            <div className="id-cols">
-              <div><span className="id-k">Temas</span><div className="id-tags">{c.analysis.topics.map((t) => <span key={t}>{t}</span>)}</div>{c.analysis.formats && <p className="id-p muted">{c.analysis.formats}</p>}</div>
-              <div><span className="id-k">Qué copiar</span><ul className="id-list">{c.analysis.copy.map((h, k) => <li key={k}>{h}</li>)}</ul>
-                {c.analysis.avoid.length ? <><span className="id-k">Qué no</span><ul className="id-list">{c.analysis.avoid.map((h, k) => <li key={k}>{h}</li>)}</ul></> : null}</div>
-            </div>
-          </section>
-        ) : (
-          <div className="note id-an-cta">
-            <span>{studying ? <><Loader2 size={13} className="spin" /> {studying.step || "En cola"}</> : "Claude puede escuchar sus mejores reels y sacar sus fórmulas de gancho, estructuras y temas."}</span>
-            {!studying && <button className="btn btn--sm btn--primary" onClick={() => ideasApi.analyzeCreator(c.id).then(() => { toast("Claude va a estudiar sus mejores reels"); reload(); }).catch((e) => toast(e.message, "bad"))}><BarChart3 size={14} /> Estudiar a fondo</button>}
-          </div>
-        )}
-
         <div className="id-filters">
           <div className="seg seg--sm">{(Object.keys(SORTS) as (keyof typeof SORTS)[]).map((k) => <button key={k} className={sort === k ? "is-on" : ""} onClick={() => setSort(k)}>{SORTS[k]}</button>)}</div>
           <div className="seg seg--sm">
-            <button className={type === "all" ? "is-on" : ""} onClick={() => setType("all")}>Todo</button>
             <button className={type === "video" ? "is-on" : ""} onClick={() => setType("video")}>Reels</button>
+            <button className={type === "all" ? "is-on" : ""} onClick={() => setType("all")}>Todo</button>
             <button className={type === "foto" ? "is-on" : ""} onClick={() => setType("foto")}>Fotos y carruseles</button>
           </div>
-          <span className="muted">{posts.length} posts</span>
+          <span className="muted">{posts.length} {type === "video" ? "reels" : type === "foto" ? "fotos y carruseles" : "publicaciones"}</span>
         </div>
 
         {sel && (
@@ -370,6 +381,27 @@ function CreatorModal({ id, jobs, onClose, reload, onIdeas }: { id: string; jobs
             </button>
           ))}
         </div>
+
+        {c.analysis ? (
+          <section className="id-an">
+            <h4 className="id-h"><Sparkles size={15} /> Qué le funciona</h4>
+            <p className="id-p">{c.analysis.summary}</p>
+            <div className="id-cols">
+              <div><span className="id-k">Ganchos</span><ul className="id-list">{c.analysis.hooks.map((h, k) => <li key={k}>{h}</li>)}</ul></div>
+              <div><span className="id-k">Estructuras</span><ul className="id-list">{c.analysis.structures.map((h, k) => <li key={k}>{h}</li>)}</ul></div>
+            </div>
+            <div className="id-cols">
+              <div><span className="id-k">Temas</span><div className="id-tags">{c.analysis.topics.map((t) => <span key={t}>{t}</span>)}</div>{c.analysis.formats && <p className="id-p muted">{c.analysis.formats}</p>}</div>
+              <div><span className="id-k">Qué copiar</span><ul className="id-list">{c.analysis.copy.map((h, k) => <li key={k}>{h}</li>)}</ul>
+                {c.analysis.avoid.length ? <><span className="id-k">Qué no</span><ul className="id-list">{c.analysis.avoid.map((h, k) => <li key={k}>{h}</li>)}</ul></> : null}</div>
+            </div>
+          </section>
+        ) : (
+          <div className="note id-an-cta">
+            <span>{studying ? <><Loader2 size={13} className="spin" /> {studying.step || "En cola"}</> : "Claude puede escuchar sus mejores reels y sacar sus fórmulas de gancho, estructuras y temas."}</span>
+            {!studying && <button className="btn btn--sm btn--primary" onClick={() => ideasApi.analyzeCreator(c.id).then(() => { toast("Claude va a estudiar sus mejores reels"); reload(); }).catch((e) => toast(e.message, "bad"))}><BarChart3 size={14} /> Estudiar a fondo</button>}
+          </div>
+        )}
 
       </div>
     </Modal>

@@ -179,7 +179,7 @@ export function JobsBar({ jobs, onChange, pcHint }: { jobs: IdeasJob[]; onChange
           </span>
           {(j.status === "queued" || j.status === "running") && <span className="id-job__bar"><i style={{ width: `${Math.max(4, j.progress || 0)}%` }} /></span>}
           {(j.status === "error" || j.status === "needs_login") && <button className="btn btn--sm" onClick={() => ideasApi.retryJob(j.id).then(onChange).catch((e) => toast(e.message, "bad"))}>Reintentar</button>}
-          {(j.status === "queued" || j.status === "error" || j.status === "needs_login") && <button className="btn btn--ghost btn--sm btn--icon" title="Quitar" onClick={() => ideasApi.cancelJob(j.id).then(onChange)}><X size={14} /></button>}
+          {j.status !== "done" && <button className="btn btn--ghost btn--sm btn--icon" title={j.status === "running" ? "Cancelar" : "Quitar"} onClick={() => ideasApi.cancelJob(j.id).then(onChange)}><X size={14} /></button>}
         </div>
       ))}
     </div>
